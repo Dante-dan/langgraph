@@ -33,6 +33,9 @@ from langgraph.checkpoint.serde.event_hooks import (
     register_serde_event_listener,
 )
 from langgraph.checkpoint.serde.jsonplus import (
+    EXT_CONSTRUCTOR_KW_ARGS,
+    EXT_CONSTRUCTOR_POS_ARGS,
+    EXT_CONSTRUCTOR_SINGLE_ARG,
     EXT_METHOD_SINGLE_ARG,
     InvalidModuleError,
     JsonPlusSerializer,
@@ -899,6 +902,80 @@ def test_msgpack_none_blocks_unregistered(caplog: pytest.LogCaptureFixture) -> N
     assert "blocked" in caplog.text.lower()
     expected = obj.model_dump()
     assert result == expected
+
+
+@pytest.mark.parametrize(
+    ("code", "metadata", "expected"),
+    [
+        (
+            EXT_CONSTRUCTOR_SINGLE_ARG,
+            ("uuid", "UUID", "not-a-uuid"),
+            "not-a-uuid",
+        ),
+        (
+            EXT_CONSTRUCTOR_POS_ARGS,
+            ("datetime", "date", [2026, 13, 1]),
+            [2026, 13, 1],
+        ),
+        (
+            EXT_CONSTRUCTOR_KW_ARGS,
+            ("datetime", "time", {"hour": 24, "context": {"nested": [1, 2]}}),
+            {"hour": 24, "context": {"nested": [1, 2]}},
+        ),
+        (
+            EXT_METHOD_SINGLE_ARG,
+            ("datetime", "datetime", "not-a-datetime", "fromisoformat"),
+            "not-a-datetime",
+        ),
+    ],
+)
+def test_msgpack_reconstruction_failure_preserves_decoded_data(
+    code: int, metadata: tuple[object, ...], expected: object
+) -> None:
+    serde = JsonPlusSerializer(allowed_msgpack_modules=None)
+    payload = ormsgpack.packb(
+        ormsgpack.Ext(code, _msgpack_enc(metadata)),
+        option=ormsgpack.OPT_NON_STR_KEYS,
+    )
+
+    assert serde.loads_typed(("msgpack", payload)) == expected
+
+
+@pytest.mark.parametrize(
+    ("code", "metadata", "expected"),
+    [
+        (
+            EXT_CONSTRUCTOR_SINGLE_ARG,
+            ("uuid", "UUID", "12345678123456781234567812345678"),
+            uuid.UUID("12345678-1234-5678-1234-567812345678"),
+        ),
+        (
+            EXT_CONSTRUCTOR_POS_ARGS,
+            ("datetime", "date", [2026, 9, 12]),
+            date(2026, 9, 12),
+        ),
+        (
+            EXT_CONSTRUCTOR_KW_ARGS,
+            ("datetime", "time", {"hour": 3, "minute": 14}),
+            time(3, 14),
+        ),
+        (
+            EXT_METHOD_SINGLE_ARG,
+            ("datetime", "datetime", "2026-09-12T03:14:15", "fromisoformat"),
+            datetime(2026, 9, 12, 3, 14, 15),
+        ),
+    ],
+)
+def test_msgpack_reconstruction_success_is_unchanged(
+    code: int, metadata: tuple[object, ...], expected: object
+) -> None:
+    serde = JsonPlusSerializer(allowed_msgpack_modules=None)
+    payload = ormsgpack.packb(
+        ormsgpack.Ext(code, _msgpack_enc(metadata)),
+        option=ormsgpack.OPT_NON_STR_KEYS,
+    )
+
+    assert serde.loads_typed(("msgpack", payload)) == expected
 
 
 def test_msgpack_allowlist_blocks_non_listed(
