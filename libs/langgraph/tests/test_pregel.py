@@ -3459,6 +3459,69 @@ def test_stream_subgraphs_during_execution(
     ]
 
 
+def test_stream_subgraphs_command_parent_namespace() -> None:
+    """Command.PARENT streams its update in the child without retaining child state."""
+
+    def replace(a: str, b: str | None) -> str:
+        return b if b is not None else a
+
+    class State(TypedDict):
+        node_name: Annotated[str, replace]
+        foo: str
+
+    def subgraph_node_1(state: State) -> Command[Literal["subgraph_node_2"]]:
+        return Command(
+            goto="subgraph_node_2",
+            update={
+                "node_name": "subgraph_node_1",
+                "foo": "Update at subgraph_node_1!",
+            },
+        )
+
+    def subgraph_node_2(state: State) -> Command:
+        return Command(
+            goto="node_3",
+            update={"node_name": "subgraph_node_2"},
+            graph=Command.PARENT,
+        )
+
+    subgraph_builder = StateGraph(State)
+    subgraph_builder.add_node(subgraph_node_1)
+    subgraph_builder.add_node(subgraph_node_2)
+    subgraph_builder.set_entry_point("subgraph_node_1")
+    subgraph = subgraph_builder.compile()
+
+    def node_1(state: State) -> Command[Literal["node_2"]]:
+        return Command(goto="node_2", update={"node_name": "node_1"})
+
+    def node_3(state: State) -> Command[Literal["__end__"]]:
+        return Command(goto=END, update={"node_name": "node_3"})
+
+    main_builder = StateGraph(State)
+    main_builder.add_node("node_1", node_1)
+    main_builder.add_node("node_2", subgraph)
+    main_builder.add_node("node_3", node_3)
+    main_builder.set_entry_point("node_1")
+    main_graph = main_builder.compile()
+
+    chunks = list(
+        main_graph.stream(
+            {"node_name": "__start__"}, stream_mode="values", subgraphs=True
+        )
+    )
+
+    assert any(
+        namespace
+        and values
+        == {
+            "node_name": "subgraph_node_2",
+            "foo": "Update at subgraph_node_1!",
+        }
+        for namespace, values in chunks
+    )
+    assert main_graph.invoke({"node_name": "__start__"}) == {"node_name": "node_3"}
+
+
 def test_stream_buffering_single_node(sync_checkpointer: BaseCheckpointSaver) -> None:
     class State(TypedDict):
         my_key: Annotated[str, operator.add]

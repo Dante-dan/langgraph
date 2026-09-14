@@ -725,6 +725,34 @@ class PregelLoop:
         # unset resuming flag
         self.config[CONF].pop(CONFIG_KEY_RESUMING, None)
 
+    def emit_values_for_parent_command(self, task: PregelExecutableTask) -> None:
+        """Emit a task's state update without committing it to the child graph."""
+        if self.stream is None or "values" not in self.stream.modes:
+            return
+        pending: dict[str, list[Any]] = defaultdict(list)
+        for channel, value in task.writes:
+            if channel in self.channels:
+                pending[channel].append(value)
+        local_channels = dict(self.channels)
+        updated: set[str] = set()
+        for channel, values in pending.items():
+            local_channel = self.channels[channel].copy()
+            if local_channel.update(values):
+                updated.add(channel)
+            local_channels[channel] = local_channel
+        if not updated.isdisjoint(
+            (self.output_keys,)
+            if isinstance(self.output_keys, str)
+            else self.output_keys
+        ):
+            self._emit(
+                "values",
+                map_output_values,
+                self.output_keys,
+                task.writes,
+                local_channels,
+            )
+
     def match_cached_writes(self) -> Sequence[PregelExecutableTask]:
         raise NotImplementedError
 

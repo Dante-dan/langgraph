@@ -41,7 +41,7 @@ from langgraph._internal._future import chain_future, run_coroutine_threadsafe
 from langgraph._internal._scratchpad import PregelScratchpad
 from langgraph._internal._typing import MISSING
 from langgraph.constants import TAG_HIDDEN
-from langgraph.errors import GraphBubbleUp, GraphInterrupt
+from langgraph.errors import GraphBubbleUp, GraphInterrupt, ParentCommand
 from langgraph.pregel._algo import Call
 from langgraph.pregel._executor import Submit
 from langgraph.pregel._retry import arun_with_retry, run_with_retry
@@ -154,6 +154,8 @@ class PregelRunner:
             Awaitable[PregelExecutableTask | None],
         ]
         | None = None,
+        emit_parent_command_values: Callable[[PregelExecutableTask], None]
+        | None = None,
     ) -> None:
         self.submit = submit
         self.put_writes = put_writes
@@ -163,6 +165,7 @@ class PregelRunner:
         self.error_handler_nodes = set(self.node_error_handler_map.values())
         self.schedule_error_handler = schedule_error_handler
         self.aschedule_error_handler = aschedule_error_handler
+        self.emit_parent_command_values = emit_parent_command_values
         # Exception object ids that are already routed to graph-level error handler.
         # These ids are consulted by stop/panic checks to avoid re-raising handled
         # exceptions via the normal fatal path in the same run.
@@ -589,6 +592,9 @@ class PregelRunner:
                     if resumes := [w for w in task.writes if w[0] == RESUME]:
                         writes.extend(resumes)
                     self.put_writes()(task.id, writes)  # type: ignore[misc]
+            elif isinstance(exception, ParentCommand):
+                if self.emit_parent_command_values is not None:
+                    self.emit_parent_command_values(task)
             elif isinstance(exception, GraphBubbleUp):
                 # exception will be raised in _panic_or_proceed
                 pass

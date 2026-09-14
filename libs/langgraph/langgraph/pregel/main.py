@@ -2928,6 +2928,7 @@ class Pregel(
                     node_finished=config[CONF].get(CONFIG_KEY_NODE_FINISHED),
                     node_error_handler_map=self.node_error_handler_map,
                     schedule_error_handler=loop.schedule_error_handler,
+                    emit_parent_command_values=loop.emit_values_for_parent_command,
                 )
                 # enable subgraph streaming
                 if subgraphs:
@@ -3383,6 +3384,7 @@ class Pregel(
                     node_finished=config[CONF].get(CONFIG_KEY_NODE_FINISHED),
                     node_error_handler_map=self.node_error_handler_map,
                     aschedule_error_handler=loop.aschedule_error_handler,
+                    emit_parent_command_values=loop.emit_values_for_parent_command,
                 )
                 # enable subgraph streaming
                 if subgraphs:
