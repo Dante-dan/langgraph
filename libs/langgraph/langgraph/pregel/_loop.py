@@ -73,7 +73,7 @@ from langgraph.channels.base import BaseChannel
 from langgraph.channels.binop import _get_overwrite
 from langgraph.channels.delta import DeltaChannel
 from langgraph.channels.untracked_value import UntrackedValue
-from langgraph.constants import TAG_HIDDEN
+from langgraph.constants import START, TAG_HIDDEN
 from langgraph.errors import (
     EmptyInputError,
     GraphInterrupt,
@@ -683,6 +683,11 @@ class PregelLoop:
     def after_tick(self) -> None:
         # finish superstep
         writes = [w for t in self.tasks.values() for w in t.writes]
+        visible_state_step = self.input_keys == START and any(
+            task.name != START
+            and (task.config is None or TAG_HIDDEN not in task.config.get("tags", ()))
+            for task in self.tasks.values()
+        )
         self._delta_channels_with_overwrite.update(
             ch
             for ch, v in writes
@@ -697,13 +702,20 @@ class PregelLoop:
             self.trigger_to_nodes,
         )
         # produce values output
-        if not self.updated_channels.isdisjoint(
-            (self.output_keys,)
-            if isinstance(self.output_keys, str)
-            else self.output_keys
+        if (
+            self.stream is not None
+            and "values" in self.stream.modes
+            and (
+                not self.updated_channels.isdisjoint(
+                    (self.output_keys,)
+                    if isinstance(self.output_keys, str)
+                    else self.output_keys
+                )
+                or visible_state_step
+            )
         ):
             self._emit(
-                "values", map_output_values, self.output_keys, writes, self.channels
+                "values", map_output_values, self.output_keys, True, self.channels
             )
         # capture delta-channel writes for exit-mode accumulator before clearing
         if self._exit_delta_writes is not None:
