@@ -793,8 +793,8 @@ class BaseStore(ABC):
             namespace_prefix: Hierarchical path prefix to search within.
             query: Optional query for natural language search.
             filter: Key-value pairs to filter results.
-            limit: Maximum number of items to return.
-            offset: Number of items to skip before returning results.
+            limit: Maximum non-negative number of items to return.
+            offset: Non-negative number of items to skip before returning results.
             refresh_ttl: Whether to refresh TTLs for the returned items.
                 If no TTL is specified, this argument is ignored.
 
@@ -840,6 +840,7 @@ class BaseStore(ABC):
                 Natural language search support depends on your store implementation
                 and requires proper embedding configuration.
         """
+        _validate_pagination(limit, offset)
         return self.batch(
             [
                 SearchOp(
@@ -962,8 +963,8 @@ class BaseStore(ABC):
             suffix: Filter namespaces that end with this path.
             max_depth: Return namespaces up to this depth in the hierarchy.
                 Namespaces deeper than this level will be truncated.
-            limit: Maximum number of namespaces to return.
-            offset: Number of namespaces to skip for pagination.
+            limit: Maximum non-negative number of namespaces to return.
+            offset: Non-negative number of namespaces to skip for pagination.
 
         Returns:
             A list of namespace tuples that match the criteria. Each tuple represents a
@@ -984,6 +985,7 @@ class BaseStore(ABC):
             # [("a", "b", "c"), ("a", "b", "d"), ("a", "b", "f")]
             ```
         """
+        _validate_pagination(limit, offset)
         match_conditions = []
         if prefix:
             match_conditions.append(MatchCondition(match_type="prefix", path=prefix))
@@ -1043,8 +1045,8 @@ class BaseStore(ABC):
             namespace_prefix: Hierarchical path prefix to search within.
             query: Optional query for natural language search.
             filter: Key-value pairs to filter results.
-            limit: Maximum number of items to return.
-            offset: Number of items to skip before returning results.
+            limit: Maximum non-negative number of items to return.
+            offset: Non-negative number of items to skip before returning results.
             refresh_ttl: Whether to refresh TTLs for the returned items.
                 If `None`, uses the store's `TTLConfig.refresh_default` setting.
                 If `TTLConfig` is not provided or no TTL is specified, this argument is ignored.
@@ -1091,6 +1093,7 @@ class BaseStore(ABC):
                 Natural language search support depends on your store implementation
                 and requires proper embedding configuration.
         """
+        _validate_pagination(limit, offset)
         return (
             await self.abatch(
                 [
@@ -1223,8 +1226,8 @@ class BaseStore(ABC):
             suffix: Filter namespaces that end with this path.
             max_depth: Return namespaces up to this depth in the hierarchy.
                 Namespaces deeper than this level will be truncated to this depth.
-            limit: Maximum number of namespaces to return.
-            offset: Number of namespaces to skip for pagination.
+            limit: Maximum non-negative number of namespaces to return.
+            offset: Non-negative number of namespaces to skip for pagination.
 
         Returns:
             A list of namespace tuples that match the criteria. Each tuple represents a
@@ -1245,6 +1248,7 @@ class BaseStore(ABC):
             # Returns: [("a", "b", "c"), ("a", "b", "d"), ("a", "b", "f")]
             ```
         """
+        _validate_pagination(limit, offset)
         match_conditions = []
         if prefix:
             match_conditions.append(MatchCondition(match_type="prefix", path=prefix))
@@ -1281,6 +1285,13 @@ def _validate_namespace(namespace: tuple[str, ...]) -> None:
         raise InvalidNamespaceError(
             f'Root label for namespace cannot be "langgraph". Got: {namespace}'
         )
+
+
+def _validate_pagination(limit: int, offset: int) -> None:
+    if limit < 0:
+        raise ValueError("limit must be non-negative")
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
 
 
 def _ensure_refresh(

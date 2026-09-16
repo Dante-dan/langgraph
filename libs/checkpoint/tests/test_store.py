@@ -330,6 +330,37 @@ def test_list_namespaces_basic() -> None:
     assert result == expected
 
 
+@pytest.mark.parametrize("method_name", ["search", "list_namespaces"])
+@pytest.mark.parametrize("parameter", ["limit", "offset"])
+def test_negative_pagination_is_rejected(method_name: str, parameter: str) -> None:
+    store = InMemoryStore()
+    args = (("test",),) if method_name == "search" else ()
+
+    with pytest.raises(ValueError, match=rf"^{parameter} must be non-negative$"):
+        getattr(store, method_name)(*args, **{parameter: -1})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "store_factory", [InMemoryStore, MockAsyncBatchedStore], ids=["base", "batched"]
+)
+@pytest.mark.parametrize("method_name", ["asearch", "alist_namespaces"])
+@pytest.mark.parametrize("parameter", ["limit", "offset"])
+async def test_negative_async_pagination_is_rejected(
+    store_factory: type[InMemoryStore] | type[MockAsyncBatchedStore],
+    method_name: str,
+    parameter: str,
+) -> None:
+    store = store_factory()
+    args = (("test",),) if method_name == "asearch" else ()
+
+    with pytest.raises(ValueError, match=rf"^{parameter} must be non-negative$"):
+        await getattr(store, method_name)(*args, **{parameter: -1})
+
+    if isinstance(store, MockAsyncBatchedStore):
+        assert store._aqueue.empty()
+
+
 def test_list_namespaces_with_wildcards() -> None:
     store = InMemoryStore()
 
