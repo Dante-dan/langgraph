@@ -8285,6 +8285,38 @@ def test_get_graph_root_channel(snapshot: SnapshotAssertion) -> None:
     assert graph.get_graph().draw_mermaid(with_styles=False) == snapshot
 
 
+@pytest.mark.parametrize("noop_result", [None, {}])
+def test_stream_values_emits_noop_steps(noop_result: Any) -> None:
+    class State(TypedDict):
+        value: int
+
+    def increment(state: State) -> State:
+        return {"value": state["value"] + 1}
+
+    def noop(state: State) -> Any:
+        return noop_result
+
+    builder = StateGraph(State)
+    builder.add_node("increment", increment)
+    builder.add_node("noop", noop)
+    builder.add_node("finish", increment)
+    builder.add_edge(START, "increment")
+    builder.add_edge("increment", "noop")
+    builder.add_edge("noop", "finish")
+    builder.add_edge("finish", END)
+    graph = builder.compile()
+
+    assert list(graph.stream({"value": 0}, stream_mode=["updates", "values"])) == [
+        ("values", {"value": 0}),
+        ("updates", {"increment": {"value": 1}}),
+        ("values", {"value": 1}),
+        ("updates", {"noop": None}),
+        ("values", {"value": 1}),
+        ("updates", {"finish": {"value": 2}}),
+        ("values", {"value": 2}),
+    ]
+
+
 def test_imp_exception(
     sync_checkpointer: BaseCheckpointSaver,
 ) -> None:
