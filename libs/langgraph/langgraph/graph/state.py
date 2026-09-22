@@ -89,7 +89,11 @@ from langgraph.types import (
     ensure_valid_checkpointer,
 )
 from langgraph.typing import ContextT, InputT, NodeInputT, OutputT, StateT
-from langgraph.warnings import LangGraphDeprecatedSinceV05, LangGraphDeprecatedSinceV10
+from langgraph.warnings import (
+    LangGraphDeprecatedSinceV05,
+    LangGraphDeprecatedSinceV10,
+    UnknownStateKeyWarning,
+)
 
 __all__ = ("StateGraph", "CompiledStateGraph")
 
@@ -1459,13 +1463,32 @@ class CompiledStateGraph(
             if input is None:
                 return None
             elif isinstance(input, dict):
+                unknown_keys = [k for k in input if k not in output_keys]
+                if key != START and unknown_keys:
+                    warnings.warn(
+                        f"Node {key!r} returned unknown state key(s) "
+                        f"{unknown_keys!r}; they will be ignored. Add them to the "
+                        "graph state schema to retain them, or filter "
+                        "UnknownStateKeyWarning if this is intentional.",
+                        category=UnknownStateKeyWarning,
+                        stacklevel=4,
+                    )
                 return [(k, v) for k, v in input.items() if k in output_keys]
             elif isinstance(input, Command):
                 if input.graph == Command.PARENT:
                     return None
-                return [
-                    (k, v) for k, v in input._update_as_tuples() if k in output_keys
-                ]
+                updates = input._update_as_tuples()
+                unknown_keys = [k for k, _ in updates if k not in output_keys]
+                if unknown_keys:
+                    warnings.warn(
+                        f"Node {key!r} returned unknown state key(s) "
+                        f"{unknown_keys!r}; they will be ignored. Add them to the "
+                        "graph state schema to retain them, or filter "
+                        "UnknownStateKeyWarning if this is intentional.",
+                        category=UnknownStateKeyWarning,
+                        stacklevel=4,
+                    )
+                return [(k, v) for k, v in updates if k in output_keys]
             elif (
                 isinstance(input, (list, tuple))
                 and input

@@ -7,7 +7,12 @@ __all__ = (
     "LangGraphDeprecatedSinceV05",
     "LangGraphDeprecatedSinceV10",
     "LangGraphDeprecatedSinceV11",
+    "UnknownStateKeyWarning",
 )
+
+
+class UnknownStateKeyWarning(UserWarning):
+    """Warning emitted when a node returns state keys the graph will ignore."""
 
 
 class LangGraphDeprecationWarning(DeprecationWarning):

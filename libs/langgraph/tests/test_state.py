@@ -18,6 +18,7 @@ from langgraph.graph.state import (
     _is_field_channel,
     _warn_invalid_state_schema,
 )
+from langgraph.warnings import UnknownStateKeyWarning
 
 
 class State(BaseModel):
@@ -371,3 +372,28 @@ def test_is_field_channel() -> None:
     # No channel cases
     assert _is_field_channel(int) is None
     assert _is_field_channel(Annotated[int, "just_metadata"]) is None
+
+
+def test_warns_when_node_returns_unknown_state_keys() -> None:
+    class GraphState(TypedDict):
+        value: int
+
+    builder = StateGraph(GraphState)
+    builder.add_node("node", lambda state: {"value": state["value"] + 1, "typo": True})
+    builder.set_entry_point("node")
+
+    with pytest.warns(UnknownStateKeyWarning, match=r"Node 'node'.*'typo'"):
+        assert builder.compile().invoke({"value": 1}) == {"value": 2}
+
+
+def test_does_not_warn_for_unknown_graph_input_keys() -> None:
+    class GraphState(TypedDict):
+        value: int
+
+    builder = StateGraph(GraphState)
+    builder.add_node("node", lambda state: {"value": state["value"] + 1})
+    builder.set_entry_point("node")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UnknownStateKeyWarning)
+        assert builder.compile().invoke({"value": 1, "ignored": True}) == {"value": 2}
