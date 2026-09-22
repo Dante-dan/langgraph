@@ -940,6 +940,34 @@ class RunsClient:
             params=params,
         )
 
+    async def insert_input(
+        self,
+        thread_id: str,
+        run_id: str,
+        input: Input,
+        *,
+        headers: Mapping[str, str] | None = None,
+        params: QueryParamTypes | None = None,
+    ) -> dict[str, Any]:
+        """Insert input into a running run at its next step boundary.
+
+        Args:
+            thread_id: The thread containing the run.
+            run_id: The active run that should receive the input.
+            input: The input to apply through the graph's state reducers.
+            headers: Optional custom headers to include with the request.
+            params: Optional query parameters to include with the request.
+
+        Returns:
+            The accepted input record.
+        """
+        return await self.http.post(
+            f"/threads/{_quote_path_param(thread_id)}/runs/{_quote_path_param(run_id)}/input",
+            json={"input": input},
+            headers=headers,
+            params=params,
+        )
+
     async def cancel(
         self,
         thread_id: str,
