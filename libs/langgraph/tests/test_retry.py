@@ -2730,7 +2730,7 @@ def test_error_handler_resumes_after_crash():
     assert isinstance(captured_errors[0].error, ValueError)
     assert str(captured_errors[0].error) == "boom"
     assert any(
-        isinstance(task.error, ValueError) and str(task.error) == "boom"
+        isinstance(task.error, BaseException) and "boom" in str(task.error)
         for task in graph.get_state(config).tasks
     )
 
@@ -2742,8 +2742,8 @@ def test_error_handler_resumes_after_crash():
     assert call_count["node"] == 1  # NOT re-executed
     assert call_count["handler"] == 2  # ran again on resume
     assert captured_errors[1].node == "fail"
-    assert isinstance(captured_errors[1].error, ValueError)
-    assert str(captured_errors[1].error) == "boom"
+    assert isinstance(captured_errors[1].error, BaseException)
+    assert "boom" in str(captured_errors[1].error)
 
 
 def test_error_handler_resumes_after_crash_multiple_nodes():

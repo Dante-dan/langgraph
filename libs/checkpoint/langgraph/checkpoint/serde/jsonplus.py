@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import builtins
 import copy
 import dataclasses
 import decimal
@@ -301,7 +300,6 @@ EXT_PYDANTIC_V1 = 4
 EXT_PYDANTIC_V2 = 5
 EXT_NUMPY_ARRAY = 6
 EXT_DELTA_SNAPSHOT = 7
-EXT_BUILTIN_EXCEPTION = 8
 
 
 def _msgpack_default(obj: Any) -> str | ormsgpack.Ext:
@@ -531,14 +529,6 @@ def _msgpack_default(obj: Any) -> str | ormsgpack.Ext:
             return ormsgpack.Ext(EXT_NUMPY_ARRAY, _msgpack_enc(meta))
 
     elif isinstance(obj, BaseException):
-        if obj.__class__.__module__ == "builtins":
-            try:
-                return ormsgpack.Ext(
-                    EXT_BUILTIN_EXCEPTION,
-                    _msgpack_enc((obj.__class__.__name__, obj.args)),
-                )
-            except (TypeError, ValueError):
-                pass
         return repr(obj)
     else:
         raise TypeError(f"Object of type {obj.__class__.__name__} is not serializable")
@@ -647,17 +637,6 @@ def _create_msgpack_ext_hook(
                     data, ext_hook=ext_hook, option=ormsgpack.OPT_NON_STR_KEYS
                 )
             )
-        elif code == EXT_BUILTIN_EXCEPTION:
-            try:
-                name, args = ormsgpack.unpackb(
-                    data, ext_hook=ext_hook, option=ormsgpack.OPT_NON_STR_KEYS
-                )
-                cls = getattr(builtins, name, None)
-                if isinstance(cls, type) and issubclass(cls, BaseException):
-                    return cls(*args)
-                return Exception(f"{name}{tuple(args)!r}")
-            except Exception:
-                return Exception("Unable to deserialize persisted exception")
         elif code == EXT_CONSTRUCTOR_SINGLE_ARG:
             try:
                 tup = ormsgpack.unpackb(
@@ -770,16 +749,6 @@ _msgpack_ext_hook = _create_msgpack_ext_hook(allowed_modules=None)
 
 
 def _msgpack_ext_hook_to_json(code: int, data: bytes) -> Any:
-    if code == EXT_BUILTIN_EXCEPTION:
-        try:
-            name, args = ormsgpack.unpackb(
-                data,
-                ext_hook=_msgpack_ext_hook_to_json,
-                option=ormsgpack.OPT_NON_STR_KEYS,
-            )
-            return f"{name}({', '.join(repr(arg) for arg in args)})"
-        except Exception:
-            return
     if code == EXT_CONSTRUCTOR_SINGLE_ARG:
         try:
             tup = ormsgpack.unpackb(

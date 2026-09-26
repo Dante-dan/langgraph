@@ -98,22 +98,6 @@ class MyEnum(Enum):
     BAR = "bar"
 
 
-def test_builtin_exception_round_trips_in_strict_mode() -> None:
-    serde = JsonPlusSerializer(allowed_msgpack_modules=None)
-    error = serde.loads_typed(serde.dumps_typed(ValueError("boom")))
-    assert isinstance(error, ValueError)
-    assert error.args == ("boom",)
-
-
-def test_custom_exception_keeps_legacy_representation() -> None:
-    class CustomError(Exception):
-        pass
-
-    serde = JsonPlusSerializer(allowed_msgpack_modules=None)
-    error = serde.loads_typed(serde.dumps_typed(CustomError("boom")))
-    assert error == "CustomError('boom')"
-
-
 @dataclasses_json.dataclass_json
 @dataclasses.dataclass
 class Person:

@@ -938,10 +938,14 @@ def test_pending_writes_resume(
     assert state is not None
     assert state.values == {"value": 3}
     assert state.next == ("two",)
-    assert state.tasks == (
-        PregelTask(AnyStr(), "one", (PULL, "one"), result={"value": 2}),
-        PregelTask(AnyStr(), "two", (PULL, "two"), 'ConnectionError("I\'m not good")'),
+    assert state.tasks[0] == PregelTask(
+        AnyStr(), "one", (PULL, "one"), result={"value": 2}
     )
+    assert state.tasks[1]._replace(error=None) == PregelTask(
+        AnyStr(), "two", (PULL, "two")
+    )
+    assert isinstance(state.tasks[1].error, BaseException)
+    assert str(state.tasks[1].error) == 'ConnectionError("I\'m not good")'
     assert state.metadata == {
         "parents": {},
         "source": "loop",
