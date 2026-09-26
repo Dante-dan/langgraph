@@ -2,6 +2,9 @@
 
 import ast
 import importlib
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -51,9 +54,27 @@ def _exporting_modules() -> list[str]:
 @pytest.mark.parametrize("module_name", _exporting_modules())
 def test_advertised_exports_are_importable(module_name: str) -> None:
     if module_name == "langgraph_sdk.cache":
-        # This module imports the optional Agent Server cache when installed.
-        # That server requires deployment configuration absent from library tests.
-        pytest.skip("Agent Server cache requires deployment configuration")
+        # The optional Agent Server cache reads deployment settings at import.
+        # Keep its configuration isolated from the rest of the library suite.
+        env = {
+            **os.environ,
+            "DATABASE_URI": "postgresql://localhost/langgraph_import_test",
+            "REDIS_URI": "redis://localhost:6379/15",
+        }
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import importlib; module = importlib.import_module('langgraph_sdk.cache'); "
+                "[getattr(module, name) for name in module.__all__]",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return
     module = importlib.import_module(module_name)
     for name in module.__all__:
         getattr(module, name)
