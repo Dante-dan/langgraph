@@ -25,6 +25,7 @@ from langgraph._internal._constants import (
 from langgraph._internal._typing import MISSING
 from langgraph.channels.base import BaseChannel
 from langgraph.constants import TAG_HIDDEN
+from langgraph.pregel._algo import _coerce_pending_error
 from langgraph.pregel._io import read_channels
 from langgraph.types import (
     CheckpointPayload,
@@ -228,6 +229,8 @@ def tasks_w_writes(
             (exc for tid, n, exc in pending_writes if tid == task.id and n == ERROR),
             None,
         )
+        if task_error is not None:
+            task_error = _coerce_pending_error(task_error)
         task_interrupts = tuple(
             v
             for tid, n, vv in pending_writes

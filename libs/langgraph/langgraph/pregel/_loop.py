@@ -86,6 +86,7 @@ from langgraph.pregel._algo import (
     Call,
     GetNextVersion,
     PregelTaskWrites,
+    _coerce_pending_error,
     apply_writes,
     checkpoint_null_version,
     increment,
@@ -782,7 +783,7 @@ class PregelLoop:
                     None,
                 )
                 if error is not None:
-                    failed[tid] = error
+                    failed[tid] = _coerce_pending_error(error)
         # Phase 2: mark originals as done, schedule handler tasks.
         for task_id, error in failed.items():
             task = self.tasks.get(task_id)

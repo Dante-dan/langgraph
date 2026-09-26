@@ -2698,7 +2698,7 @@ def test_error_handler_resumes_after_crash():
 
     def failing_node(state: State) -> State:
         call_count["node"] += 1
-        raise RuntimeError("boom")
+        raise ValueError("boom")
 
     handler_should_fail = [True]
 
@@ -2727,8 +2727,12 @@ def test_error_handler_resumes_after_crash():
     assert call_count["node"] == 1
     assert call_count["handler"] == 1
     assert captured_errors[0].node == "fail"
-    assert isinstance(captured_errors[0].error, RuntimeError)
+    assert isinstance(captured_errors[0].error, ValueError)
     assert str(captured_errors[0].error) == "boom"
+    assert any(
+        isinstance(task.error, ValueError) and str(task.error) == "boom"
+        for task in graph.get_state(config).tasks
+    )
 
     # Resume: handler should run again, NOT the original node
     handler_should_fail[0] = False
@@ -2737,11 +2741,9 @@ def test_error_handler_resumes_after_crash():
     assert result["foo"] == "recovered"
     assert call_count["node"] == 1  # NOT re-executed
     assert call_count["handler"] == 2  # ran again on resume
-    # on resume the error was round-tripped through the checkpointer, so it
-    # may be deserialized as a string representation rather than the original
-    # exception type — verify the node name and that the error content matches.
     assert captured_errors[1].node == "fail"
-    assert "boom" in str(captured_errors[1].error)
+    assert isinstance(captured_errors[1].error, ValueError)
+    assert str(captured_errors[1].error) == "boom"
 
 
 def test_error_handler_resumes_after_crash_multiple_nodes():
