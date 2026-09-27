@@ -99,6 +99,15 @@ class GraphRunStream:
         them all. The cost is that a misspelling type-checks too, and fails at
         runtime instead.
         """
+        # Python calls __getattr__ when a property getter raises AttributeError,
+        # too. The completion properties re-raise the stored node error; do not
+        # replace that error with a misleading "missing projection" message.
+        if name in {"output", "interrupted", "interrupts"}:
+            mux = self.__dict__.get("_mux")
+            if mux is not None and isinstance(
+                error := mux._events._error, AttributeError
+            ):
+                raise error
         _raise_missing_projection(self, name)
 
     def __init__(

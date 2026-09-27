@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import operator
 import sys
+import traceback
 from dataclasses import dataclass
 from typing import Annotated, Any, TypeVar
 
@@ -1302,6 +1303,31 @@ def test_unregistered_projection_raises_attribute_error() -> None:
     # Registered projections still resolve, and the run is unaffected.
     assert isinstance(run.messages, StreamChannel)
     assert run.output is not None
+
+
+@pytest.mark.parametrize("property_name", ["output", "interrupted", "interrupts"])
+def test_sync_run_property_preserves_node_attribute_error(property_name: str) -> None:
+    """A node's AttributeError must survive the projection lookup fallback."""
+    node_error = AttributeError("missing node attribute")
+
+    def failing_node(state: SimpleState) -> dict[str, Any]:
+        raise node_error
+
+    graph = (
+        StateGraph(SimpleState)
+        .add_node("failing_node", failing_node)
+        .add_edge(START, "failing_node")
+        .compile()
+    )
+    run = graph.stream_events(_SIMPLE_INPUT, version="v3")
+
+    with pytest.raises(AttributeError) as exc_info:
+        getattr(run, property_name)
+
+    assert exc_info.value is node_error
+    assert any(
+        frame.name == "failing_node" for frame in traceback.extract_tb(exc_info.tb)
+    )
 
 
 def test_getattr_fallback_does_not_recurse_before_init() -> None:
