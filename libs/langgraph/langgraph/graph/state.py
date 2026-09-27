@@ -1496,14 +1496,7 @@ class CompiledStateGraph(
             ):
                 updates: list[tuple[str, Any]] = []
                 for i in input:
-                    if isinstance(i, Command):
-                        if i.graph == Command.PARENT:
-                            continue
-                        updates.extend(
-                            (k, v) for k, v in i._update_as_tuples() if k in output_keys
-                        )
-                    else:
-                        updates.extend(_get_updates(i) or ())
+                    updates.extend(_get_updates(i) or ())
                 return updates
             elif (t := type(input)) and get_cached_annotated_keys(t):
                 return get_update_as_tuples(input, output_keys)

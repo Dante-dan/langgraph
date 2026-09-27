@@ -18,6 +18,7 @@ from langgraph.graph.state import (
     _is_field_channel,
     _warn_invalid_state_schema,
 )
+from langgraph.types import Command
 from langgraph.warnings import UnknownStateKeyWarning
 
 
@@ -380,6 +381,22 @@ def test_warns_when_node_returns_unknown_state_keys() -> None:
 
     builder = StateGraph(GraphState)
     builder.add_node("node", lambda state: {"value": state["value"] + 1, "typo": True})
+    builder.set_entry_point("node")
+
+    with pytest.warns(UnknownStateKeyWarning, match=r"Node 'node'.*'typo'"):
+        assert builder.compile().invoke({"value": 1}) == {"value": 2}
+
+
+@pytest.mark.parametrize("container", [list, tuple])
+def test_warns_for_unknown_state_key_in_command_sequence(container: type) -> None:
+    class GraphState(TypedDict):
+        value: int
+
+    builder = StateGraph(GraphState)
+    builder.add_node(
+        "node",
+        lambda state: container([Command(update={"value": 2, "typo": True})]),
+    )
     builder.set_entry_point("node")
 
     with pytest.warns(UnknownStateKeyWarning, match=r"Node 'node'.*'typo'"):
