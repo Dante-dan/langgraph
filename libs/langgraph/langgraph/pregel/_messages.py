@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from langgraph._internal._config import filter_to_user_tags
 from langgraph._internal._constants import NS_SEP
+from langgraph._internal._trace_payload import NO_RAW_PAYLOAD, raw_node_payload_value
 from langgraph.constants import TAG_HIDDEN, TAG_NOSTREAM
 from langgraph.pregel.protocol import StreamChunk
 from langgraph.types import Command
@@ -199,6 +200,9 @@ class StreamMessagesHandler(BaseCallbackHandler, _StreamingCallbackHandler):
         metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> Any:
+        raw = raw_node_payload_value.get()
+        if raw is not NO_RAW_PAYLOAD:
+            inputs = raw
         if (
             metadata
             and kwargs.get("name") == metadata.get("langgraph_node")
@@ -228,6 +232,9 @@ class StreamMessagesHandler(BaseCallbackHandler, _StreamingCallbackHandler):
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> Any:
+        raw = raw_node_payload_value.get()
+        if raw is not NO_RAW_PAYLOAD:
+            response = raw
         if meta := self.metadata.pop(run_id, None):
             # Handle Command node updates
             if isinstance(response, Command):

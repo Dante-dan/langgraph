@@ -55,6 +55,7 @@ from langgraph._internal._constants import (
     CONFIG_KEY_NODE_ERROR,
     CONFIG_KEY_RUNTIME,
 )
+from langgraph._internal._trace_payload import raw_node_payload
 from langgraph._internal._typing import MISSING
 from langgraph.errors import NodeError
 from langgraph.types import StreamWriter
@@ -679,12 +680,13 @@ class RunnableSeq(Runnable):
         # setup callbacks and context
         callback_manager = get_callback_manager_for_config(config)
         # start the root run
-        run_manager = callback_manager.on_chain_start(
-            None,
-            _trace_payload(input, self.trace_inputs),
-            name=config.get("run_name") or self.get_name(),
-            run_id=config.pop("run_id", None),
-        )
+        with raw_node_payload(input):
+            run_manager = callback_manager.on_chain_start(
+                None,
+                _trace_payload(input, self.trace_inputs),
+                name=config.get("run_name") or self.get_name(),
+                run_id=config.pop("run_id", None),
+            )
         # invoke all steps in sequence
         try:
             for i, step in enumerate(self.steps):
@@ -712,7 +714,8 @@ class RunnableSeq(Runnable):
             run_manager.on_chain_error(e)
             raise
         else:
-            run_manager.on_chain_end(_trace_payload(input, self.trace_outputs))
+            with raw_node_payload(input):
+                run_manager.on_chain_end(_trace_payload(input, self.trace_outputs))
             return input
 
     async def ainvoke(
@@ -726,12 +729,13 @@ class RunnableSeq(Runnable):
         # setup callbacks
         callback_manager = get_async_callback_manager_for_config(config)
         # start the root run
-        run_manager = await callback_manager.on_chain_start(
-            None,
-            _trace_payload(input, self.trace_inputs),
-            name=config.get("run_name") or self.get_name(),
-            run_id=config.pop("run_id", None),
-        )
+        with raw_node_payload(input):
+            run_manager = await callback_manager.on_chain_start(
+                None,
+                _trace_payload(input, self.trace_inputs),
+                name=config.get("run_name") or self.get_name(),
+                run_id=config.pop("run_id", None),
+            )
 
         # invoke all steps in sequence
         try:
@@ -765,7 +769,10 @@ class RunnableSeq(Runnable):
             await run_manager.on_chain_error(e)
             raise
         else:
-            await run_manager.on_chain_end(_trace_payload(input, self.trace_outputs))
+            with raw_node_payload(input):
+                await run_manager.on_chain_end(
+                    _trace_payload(input, self.trace_outputs)
+                )
             return input
 
     def stream(
@@ -779,12 +786,13 @@ class RunnableSeq(Runnable):
         # setup callbacks
         callback_manager = get_callback_manager_for_config(config)
         # start the root run
-        run_manager = callback_manager.on_chain_start(
-            None,
-            _trace_payload(input, self.trace_inputs),
-            name=config.get("run_name") or self.get_name(),
-            run_id=config.pop("run_id", None),
-        )
+        with raw_node_payload(input):
+            run_manager = callback_manager.on_chain_start(
+                None,
+                _trace_payload(input, self.trace_inputs),
+                name=config.get("run_name") or self.get_name(),
+                run_id=config.pop("run_id", None),
+            )
         # get the run object
         for h in run_manager.handlers:
             if isinstance(h, LangChainTracer):
@@ -826,7 +834,8 @@ class RunnableSeq(Runnable):
                 run_manager.on_chain_error(e)
                 raise
             else:
-                run_manager.on_chain_end(_trace_payload(output, self.trace_outputs))
+                with raw_node_payload(output):
+                    run_manager.on_chain_end(_trace_payload(output, self.trace_outputs))
 
     async def astream(
         self,
@@ -839,12 +848,13 @@ class RunnableSeq(Runnable):
         # setup callbacks
         callback_manager = get_async_callback_manager_for_config(config)
         # start the root run
-        run_manager = await callback_manager.on_chain_start(
-            None,
-            _trace_payload(input, self.trace_inputs),
-            name=config.get("run_name") or self.get_name(),
-            run_id=config.pop("run_id", None),
-        )
+        with raw_node_payload(input):
+            run_manager = await callback_manager.on_chain_start(
+                None,
+                _trace_payload(input, self.trace_inputs),
+                name=config.get("run_name") or self.get_name(),
+                run_id=config.pop("run_id", None),
+            )
         # stream the last steps
         # transform the input stream of each step with the next
         # steps that don't natively support transforming an input stream will
@@ -896,9 +906,10 @@ class RunnableSeq(Runnable):
                     await run_manager.on_chain_error(e)
                     raise
                 else:
-                    await run_manager.on_chain_end(
-                        _trace_payload(output, self.trace_outputs)
-                    )
+                    with raw_node_payload(output):
+                        await run_manager.on_chain_end(
+                            _trace_payload(output, self.trace_outputs)
+                        )
         else:
             try:
                 async with AsyncExitStack() as stack:
@@ -928,9 +939,10 @@ class RunnableSeq(Runnable):
                 await run_manager.on_chain_error(e)
                 raise
             else:
-                await run_manager.on_chain_end(
-                    _trace_payload(output, self.trace_outputs)
-                )
+                with raw_node_payload(output):
+                    await run_manager.on_chain_end(
+                        _trace_payload(output, self.trace_outputs)
+                    )
 
 
 def _consume_iter(it: Iterator[Any]) -> Any:
