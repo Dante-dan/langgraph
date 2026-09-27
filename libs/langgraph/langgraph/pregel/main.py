@@ -2005,7 +2005,7 @@ class Pregel(
                         checkpointer.put_writes(
                             checkpoint_config, channel_writes, task_id
                         )
-            apply_writes(
+            applied_channels = apply_writes(
                 checkpoint,
                 channels,
                 run_tasks,
@@ -2026,7 +2026,7 @@ class Pregel(
                 checkpoint,
                 channels,
                 step + 1,
-                updated_channels=updated_channels if channels_to_snapshot else None,
+                updated_channels=applied_channels if channels_to_snapshot else None,
                 get_next_version=checkpointer.get_next_version
                 if channels_to_snapshot
                 else None,
@@ -2465,7 +2465,7 @@ class Pregel(
                         await checkpointer.aput_writes(
                             checkpoint_config, channel_writes, task_id
                         )
-            apply_writes(
+            applied_channels = apply_writes(
                 checkpoint,
                 channels,
                 run_tasks,
@@ -2486,7 +2486,7 @@ class Pregel(
                 checkpoint,
                 channels,
                 step + 1,
-                updated_channels=updated_channels if channels_to_snapshot else None,
+                updated_channels=applied_channels if channels_to_snapshot else None,
                 get_next_version=checkpointer.get_next_version
                 if channels_to_snapshot
                 else None,

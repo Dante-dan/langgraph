@@ -9446,6 +9446,61 @@ async def test_delta_channel_end_to_end_inmemory() -> None:
     assert msgs[5].content == "reply-5"
 
 
+@pytest.mark.parametrize("snapshot_frequency", [1, 1000])
+@pytest.mark.parametrize("async_update", [False, True])
+async def test_delta_channel_update_state_resumes_deferred_node(
+    snapshot_frequency: int, async_update: bool
+) -> None:
+    class State(TypedDict):
+        messages: Annotated[
+            list,
+            DeltaChannel(
+                _messages_delta_reducer, snapshot_frequency=snapshot_frequency
+            ),
+        ]
+
+    def a(state: State) -> dict:
+        return {"messages": [HumanMessage("a1", id="a1")]}
+
+    def b(state: State) -> dict:
+        return {"messages": [HumanMessage("b", id="b")]}
+
+    def c(state: State) -> dict:
+        return {}
+
+    builder = StateGraph(State)
+    builder.add_node("a", a)
+    builder.add_node("b", b, defer=True)
+    builder.add_node("c", c)
+    builder.add_edge(START, "a")
+    builder.add_edge("a", "b")
+    builder.add_edge("a", "c")
+    graph = builder.compile(checkpointer=InMemorySaver(), interrupt_after=["a"])
+    config = {"configurable": {"thread_id": f"delta-deferred-{snapshot_frequency}"}}
+
+    initial = {"messages": [HumanMessage("s0", id="s0")]}
+    update = {"messages": [HumanMessage("u1", id="u1")]}
+    if async_update:
+        await graph.ainvoke(initial, config)
+        await graph.aupdate_state(config, update, as_node="c")
+        assert (await graph.aget_state(config)).next == ("b",)
+        final = await graph.ainvoke(None, config)
+        assert (await graph.aget_state(config)).next == ()
+    else:
+        graph.invoke(initial, config)
+        graph.update_state(config, update, as_node="c")
+        assert graph.get_state(config).next == ("b",)
+        final = graph.invoke(None, config)
+        assert graph.get_state(config).next == ()
+
+    assert [message.content for message in final["messages"]] == [
+        "s0",
+        "a1",
+        "u1",
+        "b",
+    ]
+
+
 async def test_delta_channel_time_travel() -> None:
     """Time-travel back to turn-1 checkpoint and resume; continuation must not include turn-2 deltas."""
 
