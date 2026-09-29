@@ -27,6 +27,40 @@ For full documentation, see the [API reference](https://reference.langchain.com/
 > [!IMPORTANT]
 > Set `LANGGRAPH_STRICT_MSGPACK=true` or pass an explicit `allowed_msgpack_modules` list when creating your checkpointer. This restricts checkpoint deserialization to known-safe types, preventing code execution if the database is compromised. See the [langgraph-checkpoint README](https://github.com/langchain-ai/langgraph/tree/main/libs/checkpoint#serde) for details.
 
+### Detecting a removed head checkpoint
+
+`get_tuple()` and `aget_tuple()` accept an optional `expected_checkpoint_id` in the
+`configurable` map. On a protected resume, load the latest checkpoint ID for that
+`(thread_id, checkpoint_ns)` from a separately protected, durable anchor and pass it
+as the expectation:
+
+```python
+config = {
+    "configurable": {
+        "thread_id": thread_id,
+        "checkpoint_ns": checkpoint_ns,
+        "expected_checkpoint_id": trusted_head_id,
+    }
+}
+checkpoint_tuple = checkpointer.get_tuple(config)
+```
+
+If the SQLite head is missing or differs, the read raises
+`CheckpointHeadMismatchError` instead of returning an older checkpoint. The same
+check applies when `checkpoint_id` requests a historical checkpoint. A missing or
+empty expectation is not a protected resume: omitted expectations preserve the
+existing behavior, while an explicitly empty value is rejected.
+
+The anchor must be outside the SQLite file and protected against rollback by the
+attacker who can edit checkpoints. After each checkpoint write, persist its returned
+ID in that anchor before treating the state as committed. If a crash occurs between
+the checkpoint write and anchor update, the next protected read rejects the newer
+SQLite head; recovery must reconcile the two stores through a trusted procedure.
+For an intentional reset or fork, establish a new trusted anchor for the new
+thread/namespace before protected reads. This read check does not make checkpoint
+and anchor writes atomic or fence concurrent writers; applications must coordinate
+those operations themselves.
+
 ## Usage
 
 ```python
@@ -40,24 +74,12 @@ with SqliteSaver.from_conn_string(":memory:") as checkpointer:
         "v": 4,
         "ts": "2024-07-31T20:14:19.804150+00:00",
         "id": "1ef4f797-8335-6428-8001-8a1503f9b875",
-        "channel_values": {
-            "my_key": "meow",
-            "node": "node"
-        },
-        "channel_versions": {
-            "__start__": 2,
-            "my_key": 3,
-            "start:node": 3,
-            "node": 3
-        },
+        "channel_values": {"my_key": "meow", "node": "node"},
+        "channel_versions": {"__start__": 2, "my_key": 3, "start:node": 3, "node": 3},
         "versions_seen": {
             "__input__": {},
-            "__start__": {
-                "__start__": 1
-            },
-            "node": {
-                "start:node": 2
-            }
+            "__start__": {"__start__": 1},
+            "node": {"start:node": 2},
         },
     }
 
@@ -81,24 +103,12 @@ async with AsyncSqliteSaver.from_conn_string(":memory:") as checkpointer:
         "v": 4,
         "ts": "2024-07-31T20:14:19.804150+00:00",
         "id": "1ef4f797-8335-6428-8001-8a1503f9b875",
-        "channel_values": {
-            "my_key": "meow",
-            "node": "node"
-        },
-        "channel_versions": {
-            "__start__": 2,
-            "my_key": 3,
-            "start:node": 3,
-            "node": 3
-        },
+        "channel_values": {"my_key": "meow", "node": "node"},
+        "channel_versions": {"__start__": 2, "my_key": 3, "start:node": 3, "node": 3},
         "versions_seen": {
             "__input__": {},
-            "__start__": {
-                "__start__": 1
-            },
-            "node": {
-                "start:node": 2
-            }
+            "__start__": {"__start__": 1},
+            "node": {"start:node": 2},
         },
     }
 

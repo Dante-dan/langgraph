@@ -10,7 +10,11 @@ from langgraph.checkpoint.base import (
 )
 
 from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.checkpoint.sqlite.utils import _metadata_predicate, search_where
+from langgraph.checkpoint.sqlite.utils import (
+    CheckpointHeadMismatchError,
+    _metadata_predicate,
+    search_where,
+)
 
 
 class TestSqliteSaver:
@@ -74,6 +78,134 @@ class TestSqliteSaver:
                 **self.metadata_2,
                 "run_id": "my_run_id",
             }
+
+    def test_expected_head_fails_closed_on_rollback(self) -> None:
+        with SqliteSaver.from_conn_string(":memory:") as saver:
+            thread = {"configurable": {"thread_id": "protected", "checkpoint_ns": ""}}
+            first = saver.put(thread, self.chkpnt_1, self.metadata_1, {})
+            second = saver.put(first, self.chkpnt_2, self.metadata_2, {})
+            first_id = first["configurable"]["checkpoint_id"]
+            second_id = second["configurable"]["checkpoint_id"]
+            protected = {
+                "configurable": {
+                    "thread_id": "protected",
+                    "expected_checkpoint_id": second_id,
+                }
+            }
+
+            assert (
+                saver.get_tuple(protected).config["configurable"]["checkpoint_id"]
+                == second_id
+            )
+            # A protected head also permits deliberate historical reads.
+            assert (
+                saver.get_tuple(
+                    {
+                        "configurable": {
+                            **protected["configurable"],
+                            "checkpoint_id": first_id,
+                        }
+                    }
+                ).config["configurable"]["checkpoint_id"]
+                == first_id
+            )
+            with pytest.raises(ValueError, match="non-empty string"):
+                saver.get_tuple(
+                    {
+                        "configurable": {
+                            "thread_id": "protected",
+                            "expected_checkpoint_id": None,
+                        }
+                    }
+                )
+
+            saver.conn.execute(
+                "DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_id = ?",
+                ("protected", second_id),
+            )
+            saver.conn.commit()
+            with pytest.raises(
+                CheckpointHeadMismatchError, match="Checkpoint head mismatch"
+            ):
+                saver.get_tuple(protected)
+            with pytest.raises(CheckpointHeadMismatchError):
+                saver.get_tuple(
+                    {
+                        "configurable": {
+                            **protected["configurable"],
+                            "checkpoint_id": first_id,
+                        }
+                    }
+                )
+            # Legacy reads remain opt-in; resetting/forking needs a new trusted anchor.
+            assert (
+                saver.get_tuple(thread).config["configurable"]["checkpoint_id"]
+                == first_id
+            )
+            saver.conn.execute(
+                "DELETE FROM checkpoints WHERE thread_id = ?", ("protected",)
+            )
+            saver.conn.commit()
+            with pytest.raises(CheckpointHeadMismatchError):
+                saver.get_tuple(protected)
+            reset = saver.put(
+                thread, create_checkpoint(self.chkpnt_2, {}, 2), self.metadata_2, {}
+            )
+            with pytest.raises(CheckpointHeadMismatchError):
+                saver.get_tuple(protected)
+            assert (
+                saver.get_tuple(
+                    {
+                        "configurable": {
+                            **thread["configurable"],
+                            "expected_checkpoint_id": reset["configurable"][
+                                "checkpoint_id"
+                            ],
+                        }
+                    }
+                )
+                is not None
+            )
+            fork = saver.put(
+                {"configurable": {"thread_id": "fork", "checkpoint_ns": ""}},
+                self.chkpnt_1,
+                self.metadata_1,
+                {},
+            )
+            assert (
+                saver.get_tuple(
+                    {
+                        "configurable": {
+                            "thread_id": "fork",
+                            "expected_checkpoint_id": fork["configurable"][
+                                "checkpoint_id"
+                            ],
+                        }
+                    }
+                )
+                is not None
+            )
+
+    def test_expected_head_detects_unanchored_newer_checkpoint(self) -> None:
+        with SqliteSaver.from_conn_string(":memory:") as saver:
+            first = saver.put(
+                {"configurable": {"thread_id": "protected", "checkpoint_ns": ""}},
+                self.chkpnt_1,
+                self.metadata_1,
+                {},
+            )
+            saver.put(first, self.chkpnt_2, self.metadata_2, {})
+            with pytest.raises(CheckpointHeadMismatchError):
+                saver.get_tuple(
+                    {
+                        "configurable": {
+                            "thread_id": "protected",
+                            "expected_checkpoint_id": first["configurable"][
+                                "checkpoint_id"
+                            ],
+                        }
+                    }
+                )
 
     def test_search(self) -> None:
         with SqliteSaver.from_conn_string(":memory:") as saver:
