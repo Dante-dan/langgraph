@@ -155,6 +155,7 @@ class AsyncBatchedBaseStore(BaseStore):
         namespace: tuple[str, ...],
         key: str,
     ) -> None:
+        _validate_namespace(namespace)
         self._ensure_task()
         fut = self._loop.create_future()
         self._aqueue.put_nowait((fut, PutOp(namespace, key, None)))
@@ -254,6 +255,7 @@ class AsyncBatchedBaseStore(BaseStore):
         namespace: tuple[str, ...],
         key: str,
     ) -> None:
+        _validate_namespace(namespace)
         asyncio.run_coroutine_threadsafe(
             self.adelete(namespace, key=key), self._loop
         ).result()
