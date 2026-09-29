@@ -12,6 +12,28 @@ from langgraph.checkpoint.serde.base import SerializerProtocol
 _FILTER_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+$")
 
 
+class CheckpointHeadMismatchError(ValueError):
+    """The SQLite checkpoint head does not match the caller's trusted anchor."""
+
+
+def expected_checkpoint_id(config: RunnableConfig) -> str | None:
+    """Read an opt-in head expectation from a checkpoint lookup config."""
+    configurable = config["configurable"]
+    if "expected_checkpoint_id" not in configurable:
+        return None
+    expected = configurable["expected_checkpoint_id"]
+    if not isinstance(expected, str) or not expected:
+        raise ValueError("expected_checkpoint_id must be a non-empty string")
+    return expected
+
+
+def check_checkpoint_head(expected: str, actual: str | None) -> None:
+    if actual != expected:
+        raise CheckpointHeadMismatchError(
+            f"Checkpoint head mismatch: expected {expected!r}, found {actual!r}"
+        )
+
+
 def _validate_filter_key(key: str) -> None:
     """Validate that a filter key is safe for use in SQL queries.
 

@@ -30,6 +30,8 @@ from langgraph.checkpoint.sqlite._delta import (
     step_walk_with_row,
 )
 from langgraph.checkpoint.sqlite.utils import (
+    check_checkpoint_head,
+    expected_checkpoint_id,
     load_pending_writes,
     pending_writes_sql,
     search_where,
@@ -243,24 +245,34 @@ class SqliteSaver(BaseCheckpointSaver[str]):
             CheckpointTuple(...)
         """
         checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
+        thread_id = str(config["configurable"]["thread_id"])
+        requested_id = get_checkpoint_id(config)
+        expected_id = expected_checkpoint_id(config)
         with self.cursor(transaction=False) as cur:
-            # find the latest checkpoint for the thread_id
-            if checkpoint_id := get_checkpoint_id(config):
-                cur.execute(
-                    "SELECT thread_id, checkpoint_id, parent_checkpoint_id, type, checkpoint, metadata FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ?",
-                    (
-                        str(config["configurable"]["thread_id"]),
-                        checkpoint_ns,
-                        checkpoint_id,
-                    ),
-                )
-            else:
+            # Check the latest row before resolving an explicit historical checkpoint.
+            # The expectation must come from a durable store outside this SQLite file.
+            value = None
+            if expected_id is not None:
                 cur.execute(
                     "SELECT thread_id, checkpoint_id, parent_checkpoint_id, type, checkpoint, metadata FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ? ORDER BY checkpoint_id DESC LIMIT 1",
-                    (str(config["configurable"]["thread_id"]), checkpoint_ns),
+                    (thread_id, checkpoint_ns),
                 )
+                value = cur.fetchone()
+                check_checkpoint_head(expected_id, value[1] if value else None)
+            if requested_id and requested_id != expected_id:
+                cur.execute(
+                    "SELECT thread_id, checkpoint_id, parent_checkpoint_id, type, checkpoint, metadata FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ?",
+                    (thread_id, checkpoint_ns, requested_id),
+                )
+                value = cur.fetchone()
+            elif expected_id is None:
+                cur.execute(
+                    "SELECT thread_id, checkpoint_id, parent_checkpoint_id, type, checkpoint, metadata FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ? ORDER BY checkpoint_id DESC LIMIT 1",
+                    (thread_id, checkpoint_ns),
+                )
+                value = cur.fetchone()
             # if a checkpoint is found, return it
-            if value := cur.fetchone():
+            if value:
                 (
                     thread_id,
                     checkpoint_id,
