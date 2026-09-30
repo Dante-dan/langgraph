@@ -61,6 +61,21 @@ thread/namespace before protected reads. This read check does not make checkpoin
 and anchor writes atomic or fence concurrent writers; applications must coordinate
 those operations themselves.
 
+The check covers `get_tuple()` / `aget_tuple()` (and their `get()` / `aget()`
+wrappers), including explicit historical reads. It does not cover `list()` /
+`alist()` or graph history enumeration through `get_state_history()` /
+`aget_state_history()`: those APIs still enumerate the remaining checkpoints
+without checking `expected_checkpoint_id`, even after a head deletion. Use a
+protected point read to validate the head before consuming history; that separate
+read does not make subsequent enumeration atomic with it.
+
+An expected head ID detects a missing or different head, not changes to the
+contents of a row that retains that ID. The proposed checkpoint-identity authenticated-data
+work in [#9027](https://github.com/langchain-ai/langgraph/pull/9027) addresses the
+complementary case of replaying an older authentic encrypted checkpoint under a
+newer ID. This reference alone does not provide that payload authentication, and
+payload authentication alone does not detect deletion of the latest checkpoint.
+
 ## Usage
 
 ```python
