@@ -35,9 +35,15 @@ cover `Command` results, async tools, storage migrations, provider-specific
 receipt serialization, or application-specific permits. These are decisions
 for a maintainer-approved public API. The small fake-provider tests exercise
 lost response/restart, a new tool-call ID, unknown outcome, revoked authority,
-and independent keys:
+independent keys, and a compiled `StateGraph` with unchanged default
+`RetryPolicy()` settings. The latter is an offline adaptation of
+[#8464 comment 5873257675](https://github.com/langchain-ai/langgraph/issues/8464#issuecomment-5873257675):
+a fake provider commits a charge then raises the real Stripe SDK
+`APIConnectionError`. Without the wrapper the graph retry calls the provider
+twice; with the wrapper it reconciles the committed charge and calls the
+provider once. This does not reproduce a live Stripe charge or an LLM run:
 
 ```sh
 cd libs/prebuilt
-uv run pytest ../../examples/durable-tool-effects/test_effect_wrapper.py
+uv run --with stripe pytest ../../examples/durable-tool-effects/test_effect_wrapper.py
 ```

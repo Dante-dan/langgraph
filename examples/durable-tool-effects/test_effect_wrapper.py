@@ -14,6 +14,8 @@ from effect_wrapper import (
 )
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import tool
+from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.types import RetryPolicy
 
 from langgraph.prebuilt import ToolNode
 
@@ -146,3 +148,67 @@ def test_distinct_keys_execute_and_settle_independently(tmp_path):
         }
         assert isinstance(invoke(node, call)["messages"][0], ToolMessage)
     assert calls == ["o1", "o2"]
+
+
+@pytest.mark.parametrize("durable", [False, True])
+def test_graph_retry_after_stripe_response_loss(tmp_path, durable):
+    """Offline version of #8464 comment 5873257675's default-RetryPolicy path."""
+    stripe = pytest.importorskip("stripe")
+    effects = {}
+    writes = []
+    reconciliations = []
+
+    @tool
+    def charge(order_id: str) -> str:
+        """Simulate a provider committing a charge before losing its response."""
+        writes.append(order_id)
+        effects[order_id] = f"charged {order_id}"
+        if len(writes) == 1:
+            raise stripe.APIConnectionError("provider committed, response lost")
+        return effects[order_id]
+
+    def reconcile(key, _request):
+        reconciliations.append(key)
+        return Reconciliation("settled", Receipt(effects[key]))
+
+    wrapper = (
+        DurableEffectWrapper(
+            SqliteClaimStore(tmp_path / "effects.sqlite"),
+            tool_name="charge",
+            effect_key=lambda request: request.tool_call["args"]["order_id"],
+            reconcile=reconcile,
+            authorize=lambda _request: True,
+        )
+        if durable
+        else None
+    )
+    builder = StateGraph(MessagesState)
+    builder.add_node(
+        "tools", ToolNode([charge], wrap_tool_call=wrapper), retry_policy=RetryPolicy()
+    )
+    builder.add_edge(START, "tools")
+    builder.add_edge("tools", END)
+    output = builder.compile().invoke(
+        {
+            "messages": [
+                AIMessage(
+                    "",
+                    tool_calls=[
+                        {
+                            "name": "charge",
+                            "args": {"order_id": "o988"},
+                            "id": "call-1",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+            ]
+        }
+    )
+
+    assert output["messages"][-1].content == "charged o988"
+    assert output["messages"][-1].tool_call_id == "call-1"
+    # The unwrapped node writes twice; the wrapper reconciles on the graph's
+    # retry and settles the existing effect without another provider call.
+    assert writes == (["o988"] if durable else ["o988", "o988"])
+    assert reconciliations == (["o988"] if durable else [])
