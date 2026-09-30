@@ -142,6 +142,41 @@ StreamMode = Literal[
 - `"checkpoints"`: Emit an event when a checkpoint is created, in the same format as returned by `get_state()`.
 - `"tasks"`: Emit events when tasks start and finish, including their results and errors.
 - `"debug"`: Emit `"checkpoints"` and `"tasks"` events for debugging purposes.
+
+`"updates"` contains the updates returned by nodes, before state reducers apply
+those updates. `"values"` contains the accumulated state after reducers run.
+The two modes can therefore emit different representations of the same data.
+For example, the `add_messages` reducer used by `MessagesState` converts message
+dictionaries to message objects: a node can return a dictionary in `"updates"`,
+while `"values"` contains an `AIMessage` alongside the previous messages.
+
+Example: Compare message updates with state values
+    ```python
+    from langgraph.graph import END, START, MessagesState, StateGraph
+
+    def reply(state: MessagesState):
+        return {"messages": [{"role": "assistant", "content": "Hello!"}]}
+
+    builder = StateGraph(MessagesState)
+    builder.add_node("reply", reply)
+    builder.add_edge(START, "reply")
+    builder.add_edge("reply", END)
+    graph = builder.compile()
+
+    for mode, chunk in graph.stream(
+        {"messages": [{"role": "user", "content": "Hi!"}]},
+        stream_mode=["updates", "values"],
+    ):
+        if mode == "updates":
+            print(chunk["reply"]["messages"])
+            # [{'role': 'assistant', 'content': 'Hello!'}]
+        else:
+            print(
+                [(type(message).__name__, message.content) for message in chunk["messages"]]
+            )
+            # First: [('HumanMessage', 'Hi!')]
+            # After reply: [('HumanMessage', 'Hi!'), ('AIMessage', 'Hello!')]
+    ```
 """
 
 StreamWriter = Callable[[Any], None]
