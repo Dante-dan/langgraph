@@ -1453,12 +1453,30 @@ class CompiledStateGraph(
                 k for k, v in self.builder.managed.items()
             ]
 
+        input_schema = self.builder.input_schema
+        input_aliases = (
+            _get_string_validation_aliases(input_schema) if key == START else {}
+        )
+
         def _get_updates(
             input: None | dict | Any,
         ) -> Sequence[tuple[str, Any]] | None:
             if input is None:
                 return None
             elif isinstance(input, dict):
+                if input_aliases:
+                    allow_field_names = input_schema.model_config.get(
+                        "validate_by_name",
+                        input_schema.model_config.get("populate_by_name", False),
+                    )
+                    updates = []
+                    for name in output_keys:
+                        alias = input_aliases.get(name, name)
+                        if alias in input:
+                            updates.append((name, input[alias]))
+                        elif allow_field_names and name in input:
+                            updates.append((name, input[name]))
+                    return updates
                 return [(k, v) for k, v in input.items() if k in output_keys]
             elif isinstance(input, Command):
                 if input.graph == Command.PARENT:
@@ -1743,7 +1761,26 @@ _S = TypeVar("_S")
 
 
 def _coerce_state(schema: type[_S], input: dict[str, Any]) -> _S:
+    if aliases := _get_string_validation_aliases(schema):
+        input = {aliases.get(key, key): value for key, value in input.items()}
     return schema(**input)
+
+
+def _get_string_validation_aliases(schema: type[Any]) -> dict[str, str]:
+    """Map canonical channel names to simple Pydantic validation aliases.
+
+    Channel and checkpoint names remain canonical; aliases apply when receiving
+    graph input or reconstructing a Pydantic state object from those channels.
+    """
+    if not isclass(schema) or not issubclass(schema, BaseModel):
+        return {}
+    if not schema.model_config.get("validate_by_alias", True):
+        return {}
+    return {
+        name: field.validation_alias
+        for name, field in schema.model_fields.items()
+        if isinstance(field.validation_alias, str) and field.validation_alias != name
+    }
 
 
 def _control_branch(value: Any) -> Sequence[tuple[str, Any]]:

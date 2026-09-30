@@ -7,7 +7,8 @@ from typing import Annotated as Annotated2
 
 import pytest
 from langchain_core.runnables import RunnableConfig
-from pydantic import BaseModel
+from langgraph.checkpoint.memory import InMemorySaver
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from typing_extensions import NotRequired, Required, TypedDict
 
 from langgraph.channels.binop import BinaryOperatorAggregate
@@ -28,6 +29,52 @@ class State(BaseModel):
 class State2(TypedDict):
     foo: str
     bar: int
+
+
+@pytest.mark.parametrize("populate_by_name", [False, True])
+def test_pydantic_string_alias_input(populate_by_name: bool) -> None:
+    class AliasedState(BaseModel):
+        model_config = ConfigDict(populate_by_name=populate_by_name)
+        foo: str = Field(alias="bar")
+
+    def update(state: AliasedState) -> dict[str, str]:
+        return {"foo": state.foo + "!"}
+
+    graph = (
+        StateGraph(AliasedState)
+        .add_node(update)
+        .add_edge("__start__", "update")
+        .compile(checkpointer=InMemorySaver())
+    )
+    config = {"configurable": {"thread_id": "alias"}}
+    assert graph.invoke({"bar": "hello"}, config) == {"foo": "hello!"}
+    assert graph.get_state(config).values == {"foo": "hello!"}
+    assert list(graph.stream({"bar": "hello"}, config)) == [
+        {"update": {"foo": "hello!"}}
+    ]
+    if populate_by_name:
+        assert graph.invoke({"foo": "hello"}, config) == {"foo": "hello!"}
+    else:
+        with pytest.raises(ValidationError):
+            graph.invoke({"foo": "hello"}, {"configurable": {"thread_id": "new"}})
+
+
+@pytest.mark.anyio
+async def test_pydantic_alias_generator_input() -> None:
+    class AliasedState(BaseModel):
+        model_config = ConfigDict(alias_generator=str.upper)
+        foo: str
+
+    def update(state: AliasedState) -> dict[str, str]:
+        return {"foo": state.foo + "!"}
+
+    graph = (
+        StateGraph(AliasedState)
+        .add_node(update)
+        .add_edge("__start__", "update")
+        .compile()
+    )
+    assert await graph.ainvoke({"FOO": "hello"}) == {"foo": "hello!"}
 
 
 @pytest.mark.parametrize(
