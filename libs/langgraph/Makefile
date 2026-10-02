@@ -24,6 +24,9 @@ benchmark-fast:
 	rm -f $(OUTPUT)
 	uv run python -m bench -o $(OUTPUT) --fast
 
+benchmark-codspeed:
+	uv run pytest bench/test_codspeed.py --codspeed
+
 GRAPH ?= bench/fanout_to_subgraph.py
 
 profile:
