@@ -22,6 +22,7 @@ from langchain_core.messages import (
     ToolCall,
     ToolMessage,
 )
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langchain_core.tools import InjectedToolCallId, ToolException
 from langchain_core.tools import tool as dec_tool
@@ -47,6 +48,7 @@ from langgraph.prebuilt.chat_agent_executor import (
     AgentStatePydantic,
     StateSchemaType,
     _get_model,
+    _get_prompt_runnable,
     _should_bind_tools,
     _validate_chat_history,
 )
@@ -201,6 +203,47 @@ def test_runnable_prompt():
     response = agent.invoke({"messages": inputs})
     expected_response = {"messages": inputs + [AIMessage(content="Baz hi?", id="0")]}
     assert response == expected_response
+
+
+class TemplateState(AgentState):
+    role: str
+
+
+class TemplateStatePydantic(AgentStatePydantic):
+    role: str
+
+
+@pytest.mark.parametrize("version", REACT_TOOL_CALL_VERSIONS)
+@pytest.mark.parametrize("state_schema", [TemplateState, TemplateStatePydantic])
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_template_prompt_with_state(version, state_schema, use_async):
+    prompt = ChatPromptTemplate.from_messages(
+        [("system", "You are a {role}."), ("placeholder", "{messages}")]
+    )
+    inputs = [HumanMessage("hi?")]
+    state = {"messages": inputs, "role": "helper"}
+    agent = create_react_agent(
+        FakeToolCallingModel(),
+        [],
+        prompt=prompt,
+        state_schema=state_schema,
+        version=version,
+    )
+    response = await agent.ainvoke(state) if use_async else agent.invoke(state)
+    assert response["messages"] == inputs + [
+        AIMessage(content="You are a helper.-hi?", id="0", tool_calls=[])
+    ]
+    assert response["role"] == "helper"
+
+
+def test_template_prompt_preserves_message_objects():
+    message = HumanMessage("hi?", id="input")
+    state = TemplateStatePydantic(messages=[message], role="helper")
+    prompt = ChatPromptTemplate.from_messages(
+        [("system", "You are a {role}."), ("placeholder", "{messages}")]
+    )
+    result = _get_prompt_runnable(prompt).invoke(state)
+    assert result.messages[1] is message
 
 
 @pytest.mark.parametrize("version", REACT_TOOL_CALL_VERSIONS)

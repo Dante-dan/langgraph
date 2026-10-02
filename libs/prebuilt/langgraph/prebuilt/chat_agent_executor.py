@@ -22,6 +22,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.prompts import BasePromptTemplate
 from langchain_core.runnables import (
     Runnable,
     RunnableBinding,
@@ -161,6 +162,14 @@ def _get_prompt_runnable(prompt: Prompt | None) -> Runnable:
         prompt_runnable = RunnableCallable(
             prompt,
             name=PROMPT_RUNNABLE_NAME,
+        )
+    elif isinstance(prompt, BasePromptTemplate):
+        prompt_runnable = (
+            RunnableCallable(
+                lambda state: dict(state) if isinstance(state, BaseModel) else state,
+                name=PROMPT_RUNNABLE_NAME,
+            )
+            | prompt
         )
     elif isinstance(prompt, Runnable):
         prompt_runnable = prompt
@@ -368,6 +377,7 @@ def create_react_agent(
             - `str`: This is converted to a `SystemMessage` and added to the beginning of the list of messages in `state["messages"]`.
             - `SystemMessage`: this is added to the beginning of the list of messages in `state["messages"]`.
             - `Callable`: This function should take in full graph state and the output is then passed to the language model.
+            - `BasePromptTemplate`: Template variables are populated from the graph state. Pydantic state is converted to a dictionary without recursively serializing its values.
             - `Runnable`: This runnable should take in full graph state and the output is then passed to the language model.
 
         response_format: An optional schema for the final agent output.
