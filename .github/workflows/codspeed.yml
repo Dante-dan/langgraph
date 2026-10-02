@@ -1,0 +1,48 @@
+name: CodSpeed benchmarks
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "libs/**"
+      - ".github/workflows/codspeed.yml"
+  pull_request:
+    paths:
+      - "libs/**"
+      - ".github/workflows/codspeed.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # CodSpeed simulation requires an official Python build, not uv-managed Python.
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: libs/langgraph/uv.lock
+          cache-suffix: codspeed
+      - name: Install dependencies
+        working-directory: libs/langgraph
+        run: uv sync --frozen --group test
+        env:
+          UV_PYTHON: "3.11"
+          UV_PYTHON_DOWNLOADS: never
+      - name: Run benchmarks and upload profiles
+        uses: CodSpeedHQ/action@c4fd08a3a159bd0cc208da1e0edf32b8c47d75e5 # v5
+        with:
+          mode: simulation
+          run: cd libs/langgraph && NO_DOCKER=true uv run --frozen pytest bench/test_codspeed.py --codspeed
+        env:
+          UV_PYTHON: "3.11"
+          UV_PYTHON_DOWNLOADS: never

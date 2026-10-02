@@ -1,24 +1,37 @@
-"""Initial CodSpeed coverage for existing sequential and serializer workloads."""
+"""CodSpeed measurements of the shared existing pyperf workloads."""
 
 from uuid import uuid4
 
 import pytest
-from langgraph.checkpoint.memory import InMemorySaver
 from uvloop import new_event_loop
 
-from bench.sequential import create_sequential
 from bench.serde_allowlist import collect_allowlist_large, collect_allowlist_small
+from bench.workloads import benchmarks, compilation_benchmarks
 
 
-@pytest.mark.parametrize("nodes", [10, 1000], ids=["10", "1000"])
-@pytest.mark.parametrize("checkpoint", [False, True], ids=["plain", "checkpoint"])
+@pytest.mark.parametrize(
+    "name,agraph,graph,input", benchmarks, ids=[case[0] for case in benchmarks]
+)
 @pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
-@pytest.mark.parametrize("first_event", [False, True], ids=["full", "first_event"])
-def test_sequential(benchmark, nodes, checkpoint, asynchronous, first_event):
-    graph = create_sequential(nodes).compile(
-        checkpointer=InMemorySaver() if checkpoint else None
-    )
+def test_execution(benchmark, name, agraph, graph, input, asynchronous):
+    _measure(benchmark, agraph if asynchronous else graph, input, asynchronous, False)
 
+
+@pytest.mark.parametrize(
+    "name,agraph,graph,input",
+    [
+        case
+        for case in benchmarks
+        if case[0] in ("sequential_1000", "pydantic_state_25x300")
+    ],
+    ids=["sequential_1000", "pydantic_state_25x300"],
+)
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+def test_first_event_latency(benchmark, name, agraph, graph, input, asynchronous):
+    _measure(benchmark, agraph if asynchronous else graph, input, asynchronous, True)
+
+
+def _measure(benchmark, graph, input, asynchronous, first_event):
     def config():
         return {
             "configurable": {"thread_id": str(uuid4())},
@@ -26,7 +39,7 @@ def test_sequential(benchmark, nodes, checkpoint, asynchronous, first_event):
         }
 
     def run():
-        stream = graph.stream({"messages": []}, config(), durability="exit")
+        stream = graph.stream(input, config(), durability="exit")
         try:
             if first_event:
                 return int(next(stream, None) is not None)
@@ -35,7 +48,7 @@ def test_sequential(benchmark, nodes, checkpoint, asynchronous, first_event):
             stream.close()
 
     async def arun():
-        stream = graph.astream({"messages": []}, config(), durability="exit")
+        stream = graph.astream(input, config(), durability="exit")
         count = 0
         try:
             async for _ in stream:
@@ -47,7 +60,6 @@ def test_sequential(benchmark, nodes, checkpoint, asynchronous, first_event):
             await stream.aclose()
 
     if asynchronous:
-        # Keep loop construction outside the measured invocation, as in pyperf.
         loop = new_event_loop()
         try:
             assert benchmark(lambda: loop.run_until_complete(arun())) > 0
@@ -57,10 +69,13 @@ def test_sequential(benchmark, nodes, checkpoint, asynchronous, first_event):
         assert benchmark(run) > 0
 
 
-@pytest.mark.parametrize("nodes", [10, 1000], ids=["10", "1000"])
-def test_sequential_compilation(benchmark, nodes):
-    builder = create_sequential(nodes)
-    assert benchmark(builder.compile) is not None
+@pytest.mark.parametrize(
+    "name,graph",
+    compilation_benchmarks,
+    ids=[case[0] for case in compilation_benchmarks],
+)
+def test_compilation(benchmark, name, graph):
+    assert benchmark(graph.compile) is not None
 
 
 @pytest.mark.parametrize(
