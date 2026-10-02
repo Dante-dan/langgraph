@@ -64,7 +64,9 @@ def test_sequential_compilation(benchmark, nodes):
 
 
 @pytest.mark.parametrize(
-    "collect", [collect_allowlist_small, collect_allowlist_large], ids=["small", "large"]
+    "collect",
+    [collect_allowlist_small, collect_allowlist_large],
+    ids=["small", "large"],
 )
 def test_serde_allowlist(benchmark, collect):
     benchmark(collect)
