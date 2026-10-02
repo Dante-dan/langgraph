@@ -38,6 +38,24 @@ _Writer = Callable[
 ]
 
 
+def _trace_branch_outputs(value: Any) -> Any:
+    """Describe dispatch destinations without duplicating their arguments in traces."""
+    if isinstance(value, Send):
+        output: dict[str, Any] = {"type": "Send", "node": value.node}
+        if value.timeout is not None:
+            output["timeout"] = {
+                "run_timeout": value.timeout.run_timeout,
+                "idle_timeout": value.timeout.idle_timeout,
+                "refresh_on": value.timeout.refresh_on,
+            }
+        return output
+    if isinstance(value, list):
+        return [_trace_branch_outputs(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_trace_branch_outputs(item) for item in value)
+    return value
+
+
 def _get_branch_path_input_schema(
     path: Callable[..., Hashable | Sequence[Hashable]]
     | Callable[..., Awaitable[Hashable | Sequence[Hashable]]]

@@ -17,6 +17,7 @@ from collections.abc import (
 )
 from contextlib import AsyncExitStack, contextmanager
 from contextvars import Context, Token, copy_context
+from copy import copy
 from functools import partial, wraps
 from typing import (
     Any,
@@ -309,6 +310,7 @@ class RunnableCallable(Runnable):
         trace: bool = True,
         recurse: bool = True,
         explode_args: bool = False,
+        trace_outputs: Callable[[Any], Any] | None = None,
         **kwargs: Any,
     ) -> None:
         self.name = name
@@ -331,6 +333,7 @@ class RunnableCallable(Runnable):
         self.trace = trace
         self.recurse = recurse
         self.explode_args = explode_args
+        self.trace_outputs = trace_outputs
         # check signature
         if func is None and afunc is None:
             raise ValueError("At least one of func or afunc must be provided.")
@@ -367,7 +370,16 @@ class RunnableCallable(Runnable):
         repr_args = {
             k: v
             for k, v in self.__dict__.items()
-            if k not in {"name", "func", "afunc", "config", "kwargs", "trace"}
+            if k
+            not in {
+                "name",
+                "func",
+                "afunc",
+                "config",
+                "kwargs",
+                "trace",
+                "trace_outputs",
+            }
         }
         return f"{self.get_name()}({', '.join(f'{k}={v!r}' for k, v in repr_args.items())})"
 
@@ -442,7 +454,7 @@ class RunnableCallable(Runnable):
                 run_manager.on_chain_error(e)
                 raise
             else:
-                run_manager.on_chain_end(ret)
+                run_manager.on_chain_end(_trace_payload(ret, self.trace_outputs))
         else:
             ret = self.func(*args, **kwargs)
         if self.recurse and isinstance(ret, Runnable):
@@ -517,7 +529,7 @@ class RunnableCallable(Runnable):
                 await run_manager.on_chain_error(e)
                 raise
             else:
-                await run_manager.on_chain_end(ret)
+                await run_manager.on_chain_end(_trace_payload(ret, self.trace_outputs))
         else:
             ret = await self.afunc(*args, **kwargs)
         if self.recurse and isinstance(ret, Runnable):
@@ -548,7 +560,11 @@ def is_async_generator(
 
 
 def coerce_to_runnable(
-    thing: RunnableLike, *, name: str | None, trace: bool
+    thing: RunnableLike,
+    *,
+    name: str | None,
+    trace: bool,
+    trace_outputs: Callable[[Any], Any] | None = None,
 ) -> Runnable:
     """Coerce a runnable-like object into a Runnable.
 
@@ -558,19 +574,26 @@ def coerce_to_runnable(
     Returns:
         A Runnable.
     """
-    if isinstance(thing, Runnable):
+    if isinstance(thing, RunnableCallable) and trace_outputs is not None:
+        thing = copy(thing)
+        thing.trace_outputs = trace_outputs
+        return thing
+    elif isinstance(thing, Runnable):
         return thing
     elif is_async_generator(thing) or inspect.isgeneratorfunction(thing):
         return RunnableLambda(thing, name=name)
     elif callable(thing):
         if is_async_callable(thing):
-            return RunnableCallable(None, thing, name=name, trace=trace)
+            return RunnableCallable(
+                None, thing, name=name, trace=trace, trace_outputs=trace_outputs
+            )
         else:
             return RunnableCallable(
                 thing,
                 wraps(thing)(partial(run_in_executor, None, thing)),  # type: ignore[arg-type]
                 name=name,
                 trace=trace,
+                trace_outputs=trace_outputs,
             )
     elif isinstance(thing, dict):
         return RunnableParallel(thing)

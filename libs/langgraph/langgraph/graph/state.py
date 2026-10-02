@@ -64,7 +64,7 @@ from langgraph.errors import (
     ParentCommand,
     create_error_message,
 )
-from langgraph.graph._branch import BranchSpec
+from langgraph.graph._branch import BranchSpec, _trace_branch_outputs
 from langgraph.graph._node import StateNode, StateNodeSpec
 from langgraph.managed.base import (
     ManagedValueSpec,
@@ -1016,7 +1016,9 @@ class StateGraph(Generic[StateT, ContextT, InputT, OutputT]):
             )
 
         # find a name for the condition
-        path = coerce_to_runnable(path, name=None, trace=True)
+        path = coerce_to_runnable(
+            path, name=None, trace=True, trace_outputs=_trace_branch_outputs
+        )
         name = path.name or "condition"
         # validate the condition
         if name in self.branches[source]:
