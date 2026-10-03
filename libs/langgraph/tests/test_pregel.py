@@ -1266,6 +1266,17 @@ def test_send_sequences() -> None:
     ]
 
 
+def test_command_repr_noncopyable() -> None:
+    lock = threading.Lock()
+    command = Command(update={"lock": lock}, resume=lock)
+    assert repr(command) == (f"Command(update={{'lock': {lock!r}}}, resume={lock!r})")
+
+
+@pytest.mark.parametrize("value", [None, {}, [], False, 0, ""])
+def test_command_repr_omits_falsey_values(value: Any) -> None:
+    assert repr(Command(update=value, resume=value)) == "Command()"
+
+
 def test_imp_task(
     sync_checkpointer: BaseCheckpointSaver, durability: Durability
 ) -> None:
