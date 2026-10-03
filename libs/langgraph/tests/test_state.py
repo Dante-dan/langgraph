@@ -371,3 +371,42 @@ def test_is_field_channel() -> None:
     # No channel cases
     assert _is_field_channel(int) is None
     assert _is_field_channel(Annotated[int, "just_metadata"]) is None
+
+
+@pytest.mark.parametrize(
+    "reducer",
+    [
+        set.union,
+        lambda existing, new, step=1: existing | new,
+        lambda *values: set.union(*values),
+        lambda existing, new, *, step=1: existing | new,
+    ],
+)
+def test_reducer_accepts_two_positional_arguments(reducer):
+    class ReducerState(TypedDict):
+        tags: Annotated[set[str], reducer]
+
+    builder = StateGraph(ReducerState)
+    builder.add_node("add_tag", lambda state: {"tags": {"new"}})
+    builder.set_entry_point("add_tag")
+    graph = builder.compile()
+
+    assert graph.invoke({"tags": {"existing"}}) == {"tags": {"existing", "new"}}
+
+
+@pytest.mark.parametrize(
+    "reducer",
+    [
+        lambda: None,
+        lambda existing: existing,
+        lambda existing, new, required: existing,
+        lambda existing, new, *, required: existing,
+        lambda existing, *, new: existing,
+    ],
+)
+def test_reducer_rejects_incompatible_signature(reducer):
+    class ReducerState(TypedDict):
+        tags: Annotated[set[str], reducer]
+
+    with pytest.raises(ValueError, match="Invalid reducer signature"):
+        StateGraph(ReducerState)
