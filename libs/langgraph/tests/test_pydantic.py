@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Annotated, Literal, Optional
 
 import pydantic
+import pytest
 import typing_extensions
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import (
@@ -284,9 +285,10 @@ def test_nested_pydantic_models() -> None:
     assert {**new_inputs, **update} == graph.invoke(new_inputs.copy())
 
 
-def test_pydantic_state_field_validator():
+@pytest.mark.parametrize("alias", [None, "full_name"])
+def test_pydantic_state_field_validator(alias):
     class State(BaseModel):
-        name: str
+        name: str = Field(alias=alias)
         text: str = ""
         only_root: int = 13
 
@@ -302,7 +304,7 @@ def test_pydantic_state_field_validator():
         def validate_amodel(cls, values: "State"):
             return values | {"only_root": 392}
 
-    input_state = {"name": "John"}
+    input_state = {alias or "name": "John"}
 
     def process_node(state: State):
         assert State.model_validate(input_state) == state

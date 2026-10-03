@@ -1453,13 +1453,22 @@ class CompiledStateGraph(
                 k for k, v in self.builder.managed.items()
             ]
 
+        # Graph channels use field names; aliases are an input boundary concern.
+        input_aliases = (
+            _get_state_aliases(self.builder.input_schema) if key == START else {}
+        )
+
         def _get_updates(
             input: None | dict | Any,
         ) -> Sequence[tuple[str, Any]] | None:
             if input is None:
                 return None
             elif isinstance(input, dict):
-                return [(k, v) for k, v in input.items() if k in output_keys]
+                return [
+                    (input_aliases.get(k, k), v)
+                    for k, v in input.items()
+                    if input_aliases.get(k, k) in output_keys
+                ]
             elif isinstance(input, Command):
                 if input.graph == Command.PARENT:
                     return None
@@ -1742,8 +1751,21 @@ def _pick_mapper(
 _S = TypeVar("_S")
 
 
+def _get_state_aliases(schema: type[Any]) -> dict[str, str]:
+    if not isclass(schema) or not issubclass(schema, BaseModel):
+        return {}
+    if schema.model_config.get("validate_by_alias") is False:
+        return {}
+    return {
+        field.validation_alias: name
+        for name, field in schema.model_fields.items()
+        if isinstance(field.validation_alias, str)
+    }
+
+
 def _coerce_state(schema: type[_S], input: dict[str, Any]) -> _S:
-    return schema(**input)
+    aliases = {name: alias for alias, name in _get_state_aliases(schema).items()}
+    return schema(**{aliases.get(name, name): value for name, value in input.items()})
 
 
 def _control_branch(value: Any) -> Sequence[tuple[str, Any]]:
