@@ -1,9 +1,11 @@
 import asyncio
 import contextlib
+import gc
 import operator
 import sys
 import threading
 import time
+import weakref
 from collections import deque
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
@@ -2942,3 +2944,93 @@ async def test_pregel_user_raised_cancellederror_fails_run():
     with pytest.raises(NodeCancelledError) as excinfo:
         await graph.ainvoke({"vals": []})
     assert excinfo.value.node == "boom"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_error_handler_retains_identity_before_later_nested_failure(asynchronous):
+    # Adapted from the public API reproduction in issue #9207. Collecting the
+    # first exception at the bridge makes the unsafe lifetime deterministic,
+    # without relying on the allocator to reuse its id on a particular attempt.
+    class State(TypedDict):
+        flag: bool
+        log: Annotated[list[str], operator.add]
+
+    class WorkflowFailure(RuntimeError):
+        pass
+
+    handled_ref = None
+
+    def handled_failure(state: State):
+        nonlocal handled_ref
+        if state["flag"]:
+            error = WorkflowFailure("first failure: handled")
+            handled_ref = weakref.ref(error)
+            raise error
+        return {"log": ["first-ok"]}
+
+    def recover(state: State, error: NodeError):
+        assert isinstance(error.error, WorkflowFailure)
+        return Command(update={"log": ["recovered"]}, goto="bridge")
+
+    def bridge(state: State):
+        if state["flag"]:
+            gc.collect()
+            assert handled_ref is not None and handled_ref() is not None
+        return {"log": ["bridge"]}
+
+    def unhandled_failure(state: State):
+        if state["flag"]:
+            raise WorkflowFailure("second failure: must propagate")
+        return {"log": ["second-ok"]}
+
+    handled_body = (
+        StateGraph(State)
+        .add_node("prepare", lambda state: {"log": ["prepare"]})
+        .add_node("handled_failure", handled_failure)
+        .add_edge(START, "prepare")
+        .add_edge("prepare", "handled_failure")
+        .add_edge("handled_failure", END)
+        .compile()
+    )
+    fatal_leaf = (
+        StateGraph(State)
+        .add_node("unhandled_failure", unhandled_failure)
+        .add_edge(START, "unhandled_failure")
+        .add_edge("unhandled_failure", END)
+        .compile()
+    )
+    nested_fatal = (
+        StateGraph(State)
+        .add_node("nested_work", lambda state: {"log": ["nested-work"]})
+        .add_node("fatal_leaf", fatal_leaf)
+        .add_edge(START, "nested_work")
+        .add_edge("nested_work", "fatal_leaf")
+        .add_edge("fatal_leaf", END)
+        .compile()
+    )
+    graph = (
+        StateGraph(State)
+        .add_node(
+            "guarded_subgraph",
+            handled_body,
+            error_handler=recover,
+            retry_policy=RetryPolicy(max_attempts=1),
+            destinations=("bridge",),
+        )
+        .add_node("bridge", bridge)
+        .add_node("nested_fatal", nested_fatal)
+        .add_edge(START, "guarded_subgraph")
+        .add_edge("guarded_subgraph", "bridge")
+        .add_edge("bridge", "nested_fatal")
+        .add_edge("nested_fatal", END)
+        .compile()
+    )
+    if asynchronous:
+        await graph.ainvoke({"flag": False, "log": []})
+        with pytest.raises(WorkflowFailure, match="second failure: must propagate"):
+            await graph.ainvoke({"flag": True, "log": []})
+    else:
+        graph.invoke({"flag": False, "log": []})
+        with pytest.raises(WorkflowFailure, match="second failure: must propagate"):
+            graph.invoke({"flag": True, "log": []})
