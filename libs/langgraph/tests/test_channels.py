@@ -49,8 +49,13 @@ def test_last_value() -> None:
     assert channel.get() == 4
 
 
-def test_topic() -> None:
-    channel = Topic(str).from_checkpoint(MISSING)
+@pytest.mark.parametrize("checkpoint", [MISSING, None, []])
+def test_topic(checkpoint: list[str] | None) -> None:
+    channel = Topic(str).from_checkpoint(checkpoint)
+    assert channel.checkpoint() == []
+    assert not channel.copy().is_available()
+    with pytest.raises(EmptyChannelError):
+        channel.copy().get()
     assert channel.ValueType == Sequence[str]
     assert channel.UpdateType == str | list[str]
 
@@ -73,8 +78,13 @@ def test_topic() -> None:
     assert channel.get() == ["e"]
 
 
-def test_topic_accumulate() -> None:
-    channel = Topic(str, accumulate=True).from_checkpoint(MISSING)
+@pytest.mark.parametrize("checkpoint", [MISSING, None, []])
+def test_topic_accumulate(checkpoint: list[str] | None) -> None:
+    channel = Topic(str, accumulate=True).from_checkpoint(checkpoint)
+    assert channel.checkpoint() == []
+    assert not channel.copy().is_available()
+    with pytest.raises(EmptyChannelError):
+        channel.copy().get()
     assert channel.ValueType == Sequence[str]
     assert channel.UpdateType == str | list[str]
 
@@ -89,6 +99,13 @@ def test_topic_accumulate() -> None:
     assert channel.get() == ["a", "b", "b", "c", "d", "d"]
     assert channel.update(["e"])
     assert channel.get() == ["a", "b", "b", "c", "d", "d", "e"]
+
+
+def test_topic_none_value() -> None:
+    channel = Topic(str | None).from_checkpoint([None])
+    assert channel.get() == [None]
+    assert channel.copy().get() == [None]
+    assert channel.checkpoint() == [None]
 
 
 def test_binop() -> None:

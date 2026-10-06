@@ -63,10 +63,10 @@ class Topic(
     def checkpoint(self) -> list[Value]:
         return self.values
 
-    def from_checkpoint(self, checkpoint: list[Value]) -> Self:
+    def from_checkpoint(self, checkpoint: list[Value] | None) -> Self:
         empty = self.__class__(self.typ, self.accumulate)
         empty.key = self.key
-        if checkpoint is not MISSING:
+        if checkpoint is not MISSING and checkpoint is not None:
             if isinstance(checkpoint, tuple):
                 # backwards compatibility
                 empty.values = checkpoint[1]
