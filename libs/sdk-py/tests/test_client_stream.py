@@ -156,12 +156,15 @@ def test_sync_http_client_stream_flushes_trailing_event():
     assert parts == [StreamPart(event="foo", data={"bar": 1})]
 
 
-def test_sync_http_client_stream_recovers_after_disconnect():
+@pytest.mark.parametrize("reset", [b"", b"id:\n\n", b"id: \n", b"id:\ndata: null\n\n"])
+@pytest.mark.parametrize("initial_id", [None, "initial"])
+def test_sync_http_client_stream_recovers_after_disconnect(reset: bytes, initial_id: str | None):
     reconnect_path = "/reconnect"
     first_chunks = [
         b"id: 1\n",
         b"event: values\n",
         b'data: {"step": 1}\n\n',
+        reset,
     ]
     second_chunks = [
         b"id: 2\n",
@@ -180,9 +183,7 @@ def test_sync_http_client_stream_recovers_after_disconnect():
             assert request.url.path == "/stream"
             assert request.headers["accept"] == "text/event-stream"
             assert request.headers["cache-control"] == "no-store"
-            assert "last-event-id" not in {
-                k.lower(): v for k, v in request.headers.items()
-            }
+            assert request.headers.get("Last-Event-ID") == initial_id
             assert request.read()
             return httpx.Response(
                 200,
@@ -198,7 +199,7 @@ def test_sync_http_client_stream_recovers_after_disconnect():
         if call_count == 2:
             assert request.method == "GET"
             assert request.url.path == reconnect_path
-            assert request.headers["Last-Event-ID"] == "1"
+            assert request.headers.get("Last-Event-ID") == (None if reset else "1")
             assert request.read() == b""
             return httpx.Response(
                 200,
@@ -210,7 +211,7 @@ def test_sync_http_client_stream_recovers_after_disconnect():
     transport = httpx.MockTransport(handler)
     with httpx.Client(transport=transport, base_url="https://example.com") as client:
         http_client = SyncHttpClient(client)
-        parts = list(http_client.stream("/stream", "POST", json={"payload": "value"}))
+        parts = list(http_client.stream("/stream", "POST", json={"payload": "value"}, headers={"last-event-id": initial_id} if initial_id else None))
 
     assert call_count == 2
     assert parts == [
@@ -221,12 +222,15 @@ def test_sync_http_client_stream_recovers_after_disconnect():
 
 
 @pytest.mark.asyncio
-async def test_http_client_stream_recovers_after_disconnect():
+@pytest.mark.parametrize("reset", [b"", b"id:\n\n", b"id: \n", b"id:\ndata: null\n\n"])
+@pytest.mark.parametrize("initial_id", [None, "initial"])
+async def test_http_client_stream_recovers_after_disconnect(reset: bytes, initial_id: str | None):
     reconnect_path = "/reconnect"
     first_chunks = [
         b"id: 1\n",
         b"event: values\n",
         b'data: {"step": 1}\n\n',
+        reset,
     ]
     second_chunks = [
         b"id: 2\n",
@@ -245,9 +249,7 @@ async def test_http_client_stream_recovers_after_disconnect():
             assert request.url.path == "/stream"
             assert request.headers["accept"] == "text/event-stream"
             assert request.headers["cache-control"] == "no-store"
-            assert "last-event-id" not in {
-                k.lower(): v for k, v in request.headers.items()
-            }
+            assert request.headers.get("Last-Event-ID") == initial_id
             assert await request.aread()
             return httpx.Response(
                 200,
@@ -263,7 +265,7 @@ async def test_http_client_stream_recovers_after_disconnect():
         if call_count == 2:
             assert request.method == "GET"
             assert request.url.path == reconnect_path
-            assert request.headers["Last-Event-ID"] == "1"
+            assert request.headers.get("Last-Event-ID") == (None if reset else "1")
             assert await request.aread() == b""
             return httpx.Response(
                 200,
@@ -280,7 +282,7 @@ async def test_http_client_stream_recovers_after_disconnect():
         parts = [
             part
             async for part in http_client.stream(
-                "/stream", "POST", json={"payload": "value"}
+                "/stream", "POST", json={"payload": "value"}, headers={"last-event-id": initial_id} if initial_id else None
             )
         ]
 
