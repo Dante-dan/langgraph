@@ -742,6 +742,9 @@ class Pregel(
     checkpointer: Checkpointer = None
     """`Checkpointer` used to save and load graph state."""
 
+    on_end_behavior: Literal["resume", "stop"] = "resume"
+    """Policy for invocations after clean top-level checkpointed completion."""
+
     store: BaseStore | None = None
     """Memory store to use for SharedValues."""
 
@@ -780,6 +783,7 @@ class Pregel(
         step_timeout: float | None = None,
         debug: bool | None = None,
         checkpointer: Checkpointer = None,
+        on_end_behavior: Literal["resume", "stop"] = "resume",
         store: BaseStore | None = None,
         cache: BaseCache | None = None,
         retry_policy: RetryPolicy | Sequence[RetryPolicy] = (),
@@ -825,6 +829,9 @@ class Pregel(
         self.input_channels = input_channels
         self.step_timeout = step_timeout
         self.debug = debug if debug is not None else get_debug()
+        if on_end_behavior not in ("resume", "stop"):
+            raise ValueError("on_end_behavior must be 'resume' or 'stop'")
+        self.on_end_behavior = on_end_behavior
         self.checkpointer = checkpointer
         self.store = store
         self.cache = cache
@@ -3006,6 +3013,7 @@ class Pregel(
                 interrupt_after=interrupt_after_,
                 manager=run_manager,
                 durability=durability_,
+                on_end_behavior=self.on_end_behavior,
                 trigger_to_nodes=self.trigger_to_nodes,
                 migrate_checkpoint=self._migrate_checkpoint,
                 retry_policy=self.retry_policy,
@@ -3458,6 +3466,7 @@ class Pregel(
                 interrupt_after=interrupt_after_,
                 manager=run_manager,
                 durability=durability_,
+                on_end_behavior=self.on_end_behavior,
                 trigger_to_nodes=self.trigger_to_nodes,
                 migrate_checkpoint=self._migrate_checkpoint,
                 retry_policy=self.retry_policy,

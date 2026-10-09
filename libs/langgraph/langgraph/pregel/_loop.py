@@ -325,6 +325,7 @@ class PregelLoop:
         retry_policy: Sequence[RetryPolicy] = (),
         cache_policy: CachePolicy | None = None,
         has_graph_lifecycle_callbacks: bool = False,
+        on_end_behavior: Literal["resume", "stop"] = "resume",
     ) -> None:
         self.stream = stream
         self.config = config
@@ -349,6 +350,7 @@ class PregelLoop:
         self.retry_policy = retry_policy
         self.cache_policy = cache_policy
         self.durability = durability
+        self.on_end_behavior = on_end_behavior
         self._has_graph_lifecycle_callbacks = has_graph_lifecycle_callbacks
         self._graph_lifecycle_events = deque()
         if self.stream is not None and CONFIG_KEY_STREAM in config[CONF]:
@@ -898,6 +900,14 @@ class PregelLoop:
             if tid != NULL_TASK_ID and isinstance(self.specs.get(ch), DeltaChannel)
         }
         self._exit_command_writes = []
+        # Only an explicit clean-completion marker closes the timeline. Empty
+        # task lists alone also occur at interrupt boundaries and are insufficient.
+        if (
+            self.on_end_behavior == "stop"
+            and not self.is_nested
+            and self.checkpoint_metadata.get("__langgraph_clean_end__") == "v1"
+        ):
+            self.input = None
         # Resuming from a previous checkpoint requires two things:
         # 1. A prior checkpoint exists (channel_versions is non-empty)
         # 2. The input signals continuation (not a fresh run with new input)
@@ -1195,7 +1205,9 @@ class PregelLoop:
             self._push_graph_lifecycle_event("resume")
         return updated_channels
 
-    def _put_checkpoint(self, metadata: CheckpointMetadata) -> None:
+    def _put_checkpoint(
+        self, metadata: CheckpointMetadata, *, completion: bool = False
+    ) -> None:
         # `is` (object identity) — not `==`. Three of four call sites pass a
         # fresh dict ({"source":"input"|"loop"|"fork"}); only
         # `_suppress_interrupt`(will rename to _on_loop_exit soon)
@@ -1235,11 +1247,11 @@ class PregelLoop:
                 if not isinstance(ch, DeltaChannel):
                     continue
                 u, s = prev_counters.get(ch_name, (0, 0))
-                s += 1
-                if ch_name in updated:
+                s += not completion
+                if not completion and ch_name in updated:
                     u += 1
                 new_counters[ch_name] = (u, s)
-            metadata["step"] = self.step
+            metadata["step"] = self.step - 1 if completion else self.step
             metadata["parents"] = self.config[CONF].get(CONFIG_KEY_CHECKPOINT_MAP, {})
             self.checkpoint_metadata = metadata
         else:
@@ -1456,6 +1468,20 @@ class PregelLoop:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None:
+        # A separate opt-in completion checkpoint keeps already persisted
+        # checkpoints immutable. A crash before this save leaves status unknown.
+        if (
+            self.on_end_behavior == "stop"
+            and self.checkpointer is not None
+            and not self.is_nested
+            and self.status == "done"
+            and exc_type is None
+            and self.checkpoint_metadata.get("__langgraph_clean_end__") != "v1"
+        ):
+            self.updated_channels = set()
+            self._put_checkpoint(
+                {"source": "loop", "__langgraph_clean_end__": "v1"}, completion=True
+            )
         # persist current checkpoint and writes
         if self.durability == "exit" and (
             # if it's a top graph
@@ -1626,6 +1652,7 @@ class SyncPregelLoop(PregelLoop, AbstractContextManager):
         retry_policy: Sequence[RetryPolicy] = (),
         cache_policy: CachePolicy | None = None,
         has_graph_lifecycle_callbacks: bool = False,
+        on_end_behavior: Literal["resume", "stop"] = "resume",
     ) -> None:
         super().__init__(
             input,
@@ -1648,6 +1675,7 @@ class SyncPregelLoop(PregelLoop, AbstractContextManager):
             cache_policy=cache_policy,
             durability=durability,
             has_graph_lifecycle_callbacks=has_graph_lifecycle_callbacks,
+            on_end_behavior=on_end_behavior,
         )
         self.stack = ExitStack()
         if checkpointer:
@@ -1880,6 +1908,7 @@ class AsyncPregelLoop(PregelLoop, AbstractAsyncContextManager):
         retry_policy: Sequence[RetryPolicy] = (),
         cache_policy: CachePolicy | None = None,
         has_graph_lifecycle_callbacks: bool = False,
+        on_end_behavior: Literal["resume", "stop"] = "resume",
     ) -> None:
         super().__init__(
             input,
@@ -1902,6 +1931,7 @@ class AsyncPregelLoop(PregelLoop, AbstractAsyncContextManager):
             cache_policy=cache_policy,
             durability=durability,
             has_graph_lifecycle_callbacks=has_graph_lifecycle_callbacks,
+            on_end_behavior=on_end_behavior,
         )
         self.stack = AsyncExitStack()
         if checkpointer:

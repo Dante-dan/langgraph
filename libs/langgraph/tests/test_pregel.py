@@ -9854,3 +9854,122 @@ async def test_delta_channel_async_write_ordering() -> None:
 
     state = await graph.aget_state(config)
     assert len(state.values["messages"]) == 6  # 3 human + 3 AI
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.anyio
+async def test_on_end_behavior_stop(durability: Durability, asynchronous: bool) -> None:
+    class State(TypedDict):
+        value: int
+
+    calls: list[int] = []
+
+    def work(state: State) -> dict:
+        calls.append(state["value"])
+        return {"value": state["value"] + 1}
+
+    saver = InMemorySaver()
+    builder = StateGraph(State).add_node("work", work).add_edge(START, "work")
+    builder.add_edge("work", END)
+    graph = builder.compile(checkpointer=saver, on_end_behavior="stop")
+    config = {"configurable": {"thread_id": "single-job"}}
+
+    async def invoke(graph, value):
+        if asynchronous:
+            return await graph.ainvoke(value, config, durability=durability)
+        return graph.invoke(value, config, durability=durability)
+
+    assert await invoke(graph, {"value": 1}) == {"value": 2}
+    completed = graph.get_state(config)
+    assert completed.metadata["__langgraph_clean_end__"] == "v1"
+    assert await invoke(graph, {"value": 100}) == {"value": 2}
+    assert await invoke(graph, None) == {"value": 2}
+    assert calls == [1]
+    assert graph.get_state(config).config == completed.config
+
+    # Default continuity ignores an earlier opt-in completion marker.
+    continuing = builder.compile(checkpointer=saver)
+    assert await invoke(continuing, {"value": 3}) == {"value": 4}
+    assert "__langgraph_clean_end__" not in graph.get_state(config).metadata
+    assert await invoke(graph, {"value": 5}) == {"value": 6}
+    assert calls == [1, 3, 5]
+
+
+def test_on_end_behavior_interrupt_and_replay(durability: Durability) -> None:
+    class State(TypedDict):
+        value: int
+
+    calls: list[int] = []
+
+    def work(state: State) -> dict:
+        calls.append(state["value"])
+        return {"value": state["value"] + 1}
+
+    saver = InMemorySaver()
+    builder = StateGraph(State).add_node("work", work).add_edge(START, "work")
+    builder.add_edge("work", END)
+    graph = builder.compile(
+        checkpointer=saver, on_end_behavior="stop", interrupt_after=["work"]
+    )
+    config = {"configurable": {"thread_id": "interrupted-job"}}
+    assert graph.invoke({"value": 1}, config, durability=durability) == {"value": 2}
+    state = graph.get_state(config)
+    assert state.next == ()  # Not sufficient evidence of clean completion.
+    assert "__langgraph_clean_end__" not in state.metadata
+    assert graph.invoke({"value": 3}, config, durability=durability) == {"value": 4}
+    assert calls == [1, 3]  # New input at an interrupt was not discarded.
+    assert graph.invoke(None, config, durability=durability) == {"value": 4}
+    assert graph.get_state(config).metadata["__langgraph_clean_end__"] == "v1"
+    assert graph.invoke({"value": 99}, config, durability=durability) == {"value": 4}
+
+    if durability != "exit":  # Exit durability does not retain intermediate steps.
+        history = list(graph.get_state_history(config))
+        replay = next(s for s in history if s.next == ("work",))
+        assert graph.invoke(None, replay.config, durability=durability) == {"value": 4}
+        assert calls == [1, 3, 3]
+
+
+def test_on_end_behavior_error_resume(durability: Durability) -> None:
+    class State(TypedDict):
+        value: int
+
+    fail = True
+
+    def work(state: State) -> dict:
+        if fail:
+            raise ValueError("unfinished")
+        return {"value": state["value"] + 1}
+
+    saver = InMemorySaver()
+    builder = StateGraph(State).add_node("work", work).add_edge(START, "work")
+    builder.add_edge("work", END)
+    graph = builder.compile(checkpointer=saver, on_end_behavior="stop")
+    config = {
+        "configurable": {"thread_id": "failed-job"},
+        "metadata": {"completed": True, "__langgraph_clean_end__": "v1"},
+    }
+    with pytest.raises(ValueError, match="unfinished"):
+        graph.invoke({"value": 1}, config, durability=durability)
+    assert "__langgraph_clean_end__" not in graph.get_state(config).metadata
+    fail = False
+    assert graph.invoke(None, config, durability=durability) == {"value": 2}
+    assert graph.get_state(config).metadata["__langgraph_clean_end__"] == "v1"
+
+
+def test_on_end_behavior_delta_completion(durability: Durability) -> None:
+    class State(TypedDict):
+        values: Annotated[list, DeltaChannel(_extend)]
+
+    builder = StateGraph(State).add_node("work", lambda state: {"values": [2]})
+    builder.add_edge(START, "work").add_edge("work", END)
+    graph = builder.compile(checkpointer=InMemorySaver(), on_end_behavior="stop")
+    config = {"configurable": {"thread_id": "delta-single-job"}}
+    assert graph.invoke({"values": [1]}, config, durability=durability) == {
+        "values": [1, 2]
+    }
+    state = graph.get_state(config)
+    assert tuple(state.metadata["counters_since_delta_snapshot"]["values"]) == (2, 3)
+    assert state.metadata["__langgraph_clean_end__"] == "v1"
+    assert graph.invoke({"values": [3]}, config, durability=durability) == {
+        "values": [1, 2]
+    }

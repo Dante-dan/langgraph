@@ -1183,6 +1183,7 @@ class StateGraph(Generic[StateT, ContextT, InputT, OutputT]):
         interrupt_before: All | list[str] | None = None,
         interrupt_after: All | list[str] | None = None,
         debug: bool = False,
+        on_end_behavior: Literal["resume", "stop"] = "resume",
         name: str | None = None,
         transformers: Sequence[Callable[[tuple[str, ...]], Any]] | None = None,
     ) -> CompiledStateGraph[StateT, ContextT, InputT, OutputT]:
@@ -1216,6 +1217,14 @@ class StateGraph(Generic[StateT, ContextT, InputT, OutputT]):
             interrupt_before: An optional list of node names to interrupt before.
             interrupt_after: An optional list of node names to interrupt after.
             debug: A flag indicating whether to enable debug mode.
+            on_end_behavior: With `"stop"`, a checkpointed top-level graph records
+                clean completion and returns its saved output on later invocations
+                of that completed checkpoint without applying new input. The default
+                `"resume"` preserves thread continuity. Interrupts and errors do not
+                close a thread. This reference implementation adds a completion
+                checkpoint; older checkpoints without a marker remain resumable.
+                Explicit replay of an earlier checkpoint and manual state updates
+                can start a new timeline. Nested graphs are outside this policy.
             name: The name to use for the compiled graph.
             transformers: Optional sequence of `StreamTransformer` classes or
                 configured factories. Classes and factories are instantiated
@@ -1358,6 +1367,7 @@ class StateGraph(Generic[StateT, ContextT, InputT, OutputT]):
             output_channels=output_channels,
             stream_channels=stream_channels,
             checkpointer=checkpointer,
+            on_end_behavior=on_end_behavior,
             interrupt_before_nodes=interrupt_before,
             interrupt_after_nodes=interrupt_after,
             auto_validate=False,

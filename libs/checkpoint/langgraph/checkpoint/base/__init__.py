@@ -59,6 +59,13 @@ class CheckpointMetadata(TypedDict, total=False):
 
     Mapping from checkpoint namespace to checkpoint ID.
     """
+    __langgraph_clean_end__: Literal["v1"]
+    """Opt-in clean top-level completion marker.
+
+    Reserved runtime metadata; user config metadata with `__` keys is excluded.
+    Absence means unknown, not failure. Existing checkpoint formats need no
+    migration. A new input or manual state update produces unmarked metadata.
+    """
     run_id: str
     """The ID of the run that created this checkpoint."""
     counters_since_delta_snapshot: dict[str, tuple[int, int]]
