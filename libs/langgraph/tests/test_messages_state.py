@@ -11,9 +11,11 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.runnables.config import var_child_runnable_config
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
+from langgraph._internal._constants import CONF, CONFIG_KEY_SEND
 from langgraph.constants import END, START
 from langgraph.graph import add_messages
 from langgraph.graph.message import REMOVE_ALL_MESSAGES, MessagesState, push_message
@@ -341,6 +343,20 @@ def test_remove_all_messages():
     assert result == [
         _AnyIdHumanMessage(content="Updated hi there"),
     ]
+
+
+def test_push_message_without_callbacks():
+    message = AIMessage(content="No callbacks", id="1")
+    writes = []
+    token = var_child_runnable_config.set(
+        {"callbacks": None, CONF: {CONFIG_KEY_SEND: writes.extend}}
+    )
+    try:
+        assert push_message(message) == message
+    finally:
+        var_child_runnable_config.reset(token)
+
+    assert writes == [("messages", message)]
 
 
 def test_push_messages_in_graph():
