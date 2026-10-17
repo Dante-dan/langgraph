@@ -4835,6 +4835,76 @@ def test_interrupt_subgraph(sync_checkpointer: BaseCheckpointSaver):
     assert graph.invoke(Command(resume="bar"), thread1)
 
 
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("with_resume", [False, True])
+async def test_command_update_subgraph_checkpoint(
+    use_async: bool, nested: bool, with_resume: bool
+) -> None:
+    class ParentState(TypedDict):
+        foo: str
+
+    class ChildState(ParentState):
+        private: Annotated[list[str], operator.add]
+
+    def prepare(state: ChildState):
+        return {"private": ["original"]}
+
+    def finish(state: ChildState):
+        answer = interrupt("Continue?") if with_resume else "done"
+        return {"foo": ":".join([*state["private"], answer])}
+
+    child = (
+        StateGraph(ChildState)
+        .add_node("prepare", prepare)
+        .add_node("finish", finish)
+        .add_edge(START, "prepare")
+        .add_edge("prepare", "finish")
+        .compile(interrupt_before=[] if with_resume else ["finish"])
+    )
+    if nested:
+        child = (
+            StateGraph(ParentState)
+            .add_node("inner", child)
+            .add_edge(START, "inner")
+            .compile()
+        )
+    graph = (
+        StateGraph(ParentState)
+        .add_node("child", child)
+        .add_edge(START, "child")
+        .compile(checkpointer=InMemorySaver())
+    )
+    config = {"configurable": {"thread_id": "subgraph-update"}}
+    if use_async:
+        await graph.ainvoke({"foo": "parent"}, config)
+        state = await graph.aget_state(config, subgraphs=True)
+    else:
+        graph.invoke({"foo": "parent"}, config)
+        state = graph.get_state(config, subgraphs=True)
+    target = state.tasks[0].state
+    if nested:
+        target = target.tasks[0].state
+    command = Command(
+        update={"private": ["edited"]},
+        resume="done" if with_resume else None,
+    )
+    if use_async:
+        result = await graph.ainvoke(command, target.config)
+    else:
+        result = graph.invoke(command, target.config)
+    assert result == {"foo": "original:edited:done"}
+    # The command and the caller's checkpoint coordinate are not mutated.
+    assert command.update == {"private": ["edited"]}
+    assert target.config["configurable"]["checkpoint_ns"]
+    # The saved coordinate is now historical. Reject it before another write.
+    with pytest.raises(ValueError, match="latest checkpoint"):
+        if use_async:
+            await graph.ainvoke(command, target.config)
+        else:
+            graph.invoke(command, target.config)
+
+
 @pytest.mark.parametrize("resume_style", ["null", "map"])
 def test_interrupt_multiple(
     sync_checkpointer: BaseCheckpointSaver, resume_style: Literal["null", "map"]

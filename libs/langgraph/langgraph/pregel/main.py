@@ -68,6 +68,7 @@ from langgraph._internal._constants import (
     CONF,
     CONFIG_KEY_CACHE,
     CONFIG_KEY_CHECKPOINT_ID,
+    CONFIG_KEY_CHECKPOINT_MAP,
     CONFIG_KEY_CHECKPOINT_NS,
     CONFIG_KEY_CHECKPOINTER,
     CONFIG_KEY_DURABILITY,
@@ -2766,7 +2767,11 @@ class Pregel(
         """Stream graph steps for a single input.
 
         Args:
-            input: The input to the graph.
+            input: The input to the graph. For an external `Command` with an
+                update and a subgraph `checkpoint_ns`, apply the update to that
+                subgraph before resuming the parent. This requires the latest
+                checkpoint in the addressed graph and its ancestors; historical
+                updates must use `update_state` explicitly.
             config: The configuration to use for the run.
             context: The static context to use for the run.
                 !!! version-added "Added in version 0.6.0"
@@ -2862,6 +2867,54 @@ class Pregel(
                 interrupt_after=interrupt_after,
                 durability=durability,
             )
+            # A namespaced command addresses a subgraph checkpoint, while the
+            # execution loop resumes the parent graph. Apply its update through
+            # the state API before the loop normalizes the namespace.
+            if (
+                isinstance(input, Command)
+                and input.graph is None
+                and input.update is not None
+                and config[CONF].get(CONFIG_KEY_CHECKPOINT_NS)
+                and CONFIG_KEY_TASK_ID not in config[CONF]
+                and CONFIG_KEY_CHECKPOINTER not in config[CONF]
+            ):
+                # Replay coordinates would fork ancestor tasks under new
+                # namespaces. Support the active lineage, resuming its root head.
+                coordinates = dict(config[CONF].get(CONFIG_KEY_CHECKPOINT_MAP, {}))
+                if checkpoint_id := config[CONF].get(CONFIG_KEY_CHECKPOINT_ID):
+                    coordinates[config[CONF][CONFIG_KEY_CHECKPOINT_NS]] = checkpoint_id
+                for namespace, checkpoint_id in coordinates.items():
+                    latest = self.get_state(
+                        patch_configurable(
+                            config,
+                            {
+                                CONFIG_KEY_CHECKPOINT_NS: namespace,
+                                CONFIG_KEY_CHECKPOINT_ID: None,
+                                CONFIG_KEY_CHECKPOINT_MAP: {},
+                            },
+                        )
+                    )
+                    if (
+                        latest.config[CONF].get(CONFIG_KEY_CHECKPOINT_ID)
+                        != checkpoint_id
+                    ):
+                        raise ValueError(
+                            "Namespaced Command updates currently require the latest "
+                            "checkpoint in every ancestor graph. Use update_state "
+                            "explicitly when selecting historical checkpoints."
+                        )
+                self.bulk_update_state(config, [[StateUpdate(input.update)]])
+                config = patch_configurable(
+                    config,
+                    {
+                        CONFIG_KEY_CHECKPOINT_NS: "",
+                        CONFIG_KEY_CHECKPOINT_ID: None,
+                        CONFIG_KEY_CHECKPOINT_MAP: {},
+                    },
+                )
+                input = replace(input, update=None)
+                if input.resume is None and not input.goto:
+                    input = None
             callback_manager = get_callback_manager_for_config(config)
             if "messages" in stream_modes and version != "v2":
                 # Strip any inherited v2 messages handler so a v1 stream
@@ -3172,7 +3225,11 @@ class Pregel(
         """Asynchronously stream graph steps for a single input.
 
         Args:
-            input: The input to the graph.
+            input: The input to the graph. For an external `Command` with an
+                update and a subgraph `checkpoint_ns`, apply the update to that
+                subgraph before resuming the parent. This requires the latest
+                checkpoint in the addressed graph and its ancestors; historical
+                updates must use `update_state` explicitly.
             config: The configuration to use for the run.
             context: The static context to use for the run.
                 !!! version-added "Added in version 0.6.0"
@@ -3273,6 +3330,54 @@ class Pregel(
                 interrupt_after=interrupt_after,
                 durability=durability,
             )
+            # A namespaced command addresses a subgraph checkpoint, while the
+            # execution loop resumes the parent graph. Apply its update through
+            # the state API before the loop normalizes the namespace.
+            if (
+                isinstance(input, Command)
+                and input.graph is None
+                and input.update is not None
+                and config[CONF].get(CONFIG_KEY_CHECKPOINT_NS)
+                and CONFIG_KEY_TASK_ID not in config[CONF]
+                and CONFIG_KEY_CHECKPOINTER not in config[CONF]
+            ):
+                # Replay coordinates would fork ancestor tasks under new
+                # namespaces. Support the active lineage, resuming its root head.
+                coordinates = dict(config[CONF].get(CONFIG_KEY_CHECKPOINT_MAP, {}))
+                if checkpoint_id := config[CONF].get(CONFIG_KEY_CHECKPOINT_ID):
+                    coordinates[config[CONF][CONFIG_KEY_CHECKPOINT_NS]] = checkpoint_id
+                for namespace, checkpoint_id in coordinates.items():
+                    latest = await self.aget_state(
+                        patch_configurable(
+                            config,
+                            {
+                                CONFIG_KEY_CHECKPOINT_NS: namespace,
+                                CONFIG_KEY_CHECKPOINT_ID: None,
+                                CONFIG_KEY_CHECKPOINT_MAP: {},
+                            },
+                        )
+                    )
+                    if (
+                        latest.config[CONF].get(CONFIG_KEY_CHECKPOINT_ID)
+                        != checkpoint_id
+                    ):
+                        raise ValueError(
+                            "Namespaced Command updates currently require the latest "
+                            "checkpoint in every ancestor graph. Use update_state "
+                            "explicitly when selecting historical checkpoints."
+                        )
+                await self.abulk_update_state(config, [[StateUpdate(input.update)]])
+                config = patch_configurable(
+                    config,
+                    {
+                        CONFIG_KEY_CHECKPOINT_NS: "",
+                        CONFIG_KEY_CHECKPOINT_ID: None,
+                        CONFIG_KEY_CHECKPOINT_MAP: {},
+                    },
+                )
+                input = replace(input, update=None)
+                if input.resume is None and not input.goto:
+                    input = None
             callback_manager = get_async_callback_manager_for_config(config)
             if "messages" in stream_modes and version != "v2":
                 # Strip any inherited v2 messages handler so a v1 stream
