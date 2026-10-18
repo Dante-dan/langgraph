@@ -1037,20 +1037,22 @@ class PregelLoop:
                     writes[tid].append((c, v))
             if not writes and not resume_is_map:
                 raise EmptyInputError("Received empty Command input")
-            # save writes
-            for tid, ws in writes.items():
-                if forks:
-                    # These skip `put_writes`, which gives messages their ids.
-                    ensure_message_ids(self.specs, ws)
-                    carried.extend((tid, c, v) for c, v in ws)
-                else:
-                    self.put_writes(tid, ws)
-                    if self._exit_delta_writes is not None and tid == NULL_TASK_ID:
-                        self._exit_command_writes.extend(
-                            (c, v)
-                            for c, v in ws
-                            if isinstance(self.specs.get(c), DeltaChannel)
-                        )
+            # A fresh run applies the Command through the START input task.
+            # Only resumes need its writes applied here.
+            if is_resuming:
+                for tid, ws in writes.items():
+                    if forks:
+                        # These skip `put_writes`, which gives messages their ids.
+                        ensure_message_ids(self.specs, ws)
+                        carried.extend((tid, c, v) for c, v in ws)
+                    else:
+                        self.put_writes(tid, ws)
+                        if self._exit_delta_writes is not None and tid == NULL_TASK_ID:
+                            self._exit_command_writes.extend(
+                                (c, v)
+                                for c, v in ws
+                                if isinstance(self.specs.get(c), DeltaChannel)
+                            )
             self._delta_channels_forced_snapshot.update(
                 delta_channels_with_pending_writes(self.specs, carried)
             )
