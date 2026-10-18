@@ -18,6 +18,25 @@ uv add langgraph-checkpoint-sqlite
 
 This library provides a SQLite implementation of LangGraph's checkpoint saver, with both sync and async support via `aiosqlite`. Use it when you want LangGraph state persistence backed by SQLite for local development, testing, or lightweight deployments.
 
+## Checkpoint storage
+
+`SqliteSaver` and `AsyncSqliteSaver` serialize the full checkpoint, including
+`channel_values`, into the `checkpoints.checkpoint` BLOB on each checkpoint write.
+They accept `new_versions` as part of the checkpoint saver interface, but do not
+use it to deduplicate channel values by `(channel, version)`. An unchanged value
+included in successive checkpoints is stored again in each checkpoint row.
+
+Plan storage and retention for long-running workflows with large state. Store
+large artifacts, such as recordings or images, outside the checkpoint database
+and keep references in graph state when possible. Removing checkpoint history
+also removes the ability to resume or inspect those checkpoints.
+
+The Postgres saver has a different storage layout: it stores complex channel
+values separately by channel and version, and uses `new_versions` to write the
+changed values. It still stores primitive values, including strings, inline in
+each checkpoint. Switching to Postgres therefore does not deduplicate a large
+string stored directly in graph state.
+
 ## 📖 Documentation
 
 For full documentation, see the [API reference](https://reference.langchain.com/python/langgraph.checkpoint.sqlite). For conceptual guides on persistence and memory, see the [LangGraph Docs](https://docs.langchain.com/oss/python/langgraph/overview).
