@@ -1761,6 +1761,9 @@ def _control_branch(value: Any) -> Sequence[tuple[str, Any]]:
         if command.graph == Command.PARENT:
             raise ParentCommand(command)
 
+        if command.goto is None:
+            continue
+
         goto_targets = (
             [command.goto] if isinstance(command.goto, (Send, str)) else command.goto
         )

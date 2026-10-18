@@ -855,7 +855,7 @@ class Command(Generic[N], ToolOutputMixin):
     graph: str | None = None
     update: Any | None = None
     resume: dict[str, Any] | Any | None = None
-    goto: Send | Sequence[Send | N] | N = ()
+    goto: Send | Sequence[Send | N] | N | None = ()
 
     def __repr__(self) -> str:
         # get all non-None values
