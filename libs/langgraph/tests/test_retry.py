@@ -2942,3 +2942,54 @@ async def test_pregel_user_raised_cancellederror_fails_run():
     with pytest.raises(NodeCancelledError) as excinfo:
         await graph.ainvoke({"vals": []})
     assert excinfo.value.node == "boom"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("sync", [True, False])
+async def test_error_handler_interrupt_in_state_snapshot(sync: bool):
+    class State(TypedDict):
+        x: int
+
+    node_calls = 0
+
+    def boom(state: State):
+        nonlocal node_calls
+        node_calls += 1
+        raise ValueError("boom")
+
+    def ask(state: State, error: NodeError):
+        return {"x": interrupt("x")}
+
+    builder = (
+        StateGraph(State)
+        .add_node("boom", boom, error_handler=ask)
+        .add_edge(START, "boom")
+        .add_edge("boom", END)
+    )
+    graph = builder.compile(checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": "handler-interrupt"}}
+    result = (
+        graph.invoke({"x": 0}, config)
+        if sync
+        else await graph.ainvoke({"x": 0}, config)
+    )
+    snapshot = graph.get_state(config) if sync else await graph.aget_state(config)
+    assert snapshot.interrupts == tuple(result["__interrupt__"])
+    assert snapshot.next == ("__error_handler__boom",)
+    handler = next(t for t in snapshot.tasks if t.name == "__error_handler__boom")
+    assert [i.value for i in handler.interrupts] == ["x"]
+    history = (
+        list(graph.get_state_history(config))
+        if sync
+        else [s async for s in graph.aget_state_history(config)]
+    )
+    assert history[0].interrupts == snapshot.interrupts
+    resume = Command(resume={handler.interrupts[0].id: 7})
+    result = (
+        graph.invoke(resume, config) if sync else await graph.ainvoke(resume, config)
+    )
+    assert result["x"] == 7
+    snapshot = graph.get_state(config) if sync else await graph.aget_state(config)
+    assert snapshot.interrupts == ()
+    assert snapshot.next == ()
+    assert node_calls == 1

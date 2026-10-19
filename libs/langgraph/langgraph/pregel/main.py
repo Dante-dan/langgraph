@@ -80,6 +80,8 @@ from langgraph._internal._constants import (
     CONFIG_KEY_STREAM_MESSAGES_V2,
     CONFIG_KEY_TASK_ID,
     CONFIG_KEY_THREAD_ID,
+    ERROR,
+    ERROR_SOURCE_NODE,
     INPUT,
     INTERRUPT,
     NS_END,
@@ -119,13 +121,14 @@ from langgraph.errors import (
     InvalidUpdateError,
     create_error_message,
 )
-from langgraph.managed.base import ManagedValueSpec
+from langgraph.managed.base import ManagedValueMapping, ManagedValueSpec
 from langgraph.pregel._algo import (
     PregelTaskWrites,
     _scratchpad,
     apply_writes,
     local_read,
     prepare_next_tasks,
+    prepare_node_error_handler_task,
     task_path_str,
 )
 from langgraph.pregel._call import identifier
@@ -192,6 +195,7 @@ from langgraph.types import (
     Durability,
     GraphOutput,
     Interrupt,
+    PregelExecutableTask,
     Send,
     StateSnapshot,
     StateUpdate,
@@ -1210,6 +1214,46 @@ class Pregel(
                 checkpoint["channel_versions"].values()
             )
 
+    def _prepare_snapshot_error_handlers(
+        self,
+        tasks: dict[str, PregelExecutableTask],
+        saved: CheckpointTuple,
+        channels: Mapping[str, BaseChannel],
+        managed: ManagedValueMapping,
+        saver: BaseCheckpointSaver,
+        step: int,
+        stop: int,
+    ) -> None:
+        pending_writes = saved.pending_writes or []
+        statuses = read_task_statuses(pending_writes)
+        # Handlers run in the failed task's superstep without a channel trigger.
+        # Reconstruct them as the execution loop does when resuming.
+        for task_id, channel, _ in pending_writes:
+            if channel != ERROR_SOURCE_NODE or (task := tasks.get(task_id)) is None:
+                continue
+            handler_node = self.nodes[task.name].error_handler_node
+            error = statuses[task_id].error
+            if not handler_node or error is None:
+                continue
+            handler_task = prepare_node_error_handler_task(
+                task,
+                handler_node_name=handler_node,
+                failed_error=error,
+                checkpoint=saved.checkpoint,
+                pending_writes=pending_writes,
+                processes=self.nodes,
+                channels=channels,
+                managed=managed,
+                config=task.config,
+                step=step,
+                stop=stop,
+                store=self.store,
+                checkpointer=saver,
+            )
+            if handler_task is not None:
+                task.writes.append((ERROR, error))
+                tasks[handler_task.id] = handler_task
+
     def _prepare_state_snapshot(
         self,
         config: RunnableConfig,
@@ -1264,6 +1308,9 @@ class Pregel(
             store=self.store,
             checkpointer=saver,
             manager=None,
+        )
+        self._prepare_snapshot_error_handlers(
+            next_tasks, saved, channels, managed, saver, step, stop
         )
         # get the subgraphs
         subgraphs = dict(self.get_subgraphs())
@@ -1389,6 +1436,9 @@ class Pregel(
             store=self.store,
             checkpointer=saver,
             manager=None,
+        )
+        self._prepare_snapshot_error_handlers(
+            next_tasks, saved, channels, managed, saver, step, stop
         )
         # get the subgraphs
         subgraphs = {n: g async for n, g in self.aget_subgraphs()}
