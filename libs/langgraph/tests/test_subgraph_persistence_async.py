@@ -14,12 +14,14 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.prebuilt import create_react_agent
 from typing_extensions import TypedDict
 
 from langgraph.graph import START, StateGraph
 from langgraph.graph.message import MessagesState
 from langgraph.types import Command, Interrupt, interrupt
 from tests.any_str import AnyStr
+from tests.fake_chat import FakeChatModel
 
 pytestmark = pytest.mark.anyio
 
@@ -237,6 +239,68 @@ async def test_stateless_state_resets_with_interrupt_async(
 
 
 # -- checkpointer=False --
+
+
+@NEEDS_CONTEXTVARS
+async def test_checkpointer_false_agent_repeated_parent_replay_async(
+    async_checkpointer: BaseCheckpointSaver,
+) -> None:
+    """Repeated replay of one pre-agent checkpoint preserves all three branches."""
+    agent = create_react_agent(
+        FakeChatModel(
+            messages=[
+                AIMessage(content=value) for value in ("first", "second", "third")
+            ]
+        ),
+        [],
+        checkpointer=False,
+    )
+    parent = (
+        StateGraph(MessagesState)
+        .add_node("agent", agent)
+        .add_edge(START, "agent")
+        .compile(checkpointer=async_checkpointer)
+    )
+    config = {"configurable": {"thread_id": str(uuid4())}}
+    async for _ in parent.astream(
+        {"messages": [HumanMessage(content="hello")]}, config
+    ):
+        pass
+    before_agent = await anext(
+        state
+        async for state in parent.aget_state_history(config)
+        if state.next == ("agent",)
+    )
+    checkpoint_id = before_agent.config["configurable"]["checkpoint_id"]
+    completed = [await parent.aget_state(config)]
+
+    for _ in range(2):
+        async for _ in parent.astream(None, before_agent.config):
+            pass
+        completed.append(await parent.aget_state(config))
+
+    history = {
+        state.config["configurable"]["checkpoint_id"]: state
+        async for state in parent.aget_state_history(config)
+    }
+    completed_ids = [
+        state.config["configurable"]["checkpoint_id"] for state in completed
+    ]
+    assert len(set(completed_ids)) == 3
+    assert [history[cid].values["messages"][-1].content for cid in completed_ids] == [
+        "first",
+        "second",
+        "third",
+    ]
+    branches = set()
+    for cid in completed_ids:
+        while (
+            history[cid].parent_config["configurable"]["checkpoint_id"] != checkpoint_id
+        ):
+            cid = history[cid].parent_config["configurable"]["checkpoint_id"]
+        branches.add(cid)
+    assert len(branches) == 3
+    assert before_agent.config["configurable"]["checkpoint_id"] == checkpoint_id
 
 
 @NEEDS_CONTEXTVARS
