@@ -498,6 +498,11 @@ class SqliteSaver(BaseCheckpointSaver[str]):
     def delete_thread(self, thread_id: str) -> None:
         """Delete all checkpoints and writes associated with a thread ID.
 
+        This removes the thread's rows, but does not guarantee that their contents
+        are erased from the SQLite database file, its write-ahead log (WAL), or
+        external copies such as backups. See the package README for an explicit
+        offline maintenance example.
+
         Args:
             thread_id: The thread ID to delete.
 
