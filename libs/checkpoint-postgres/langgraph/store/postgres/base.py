@@ -451,16 +451,9 @@ class BasePostgresStore(Generic[C]):
             filter_clauses = []
             if op.filter:
                 for key, value in op.filter.items():
-                    if isinstance(value, dict):
-                        for op_name, val in value.items():
-                            condition, params_ = self._get_filter_condition(
-                                key, op_name, val
-                            )
-                            filter_clauses.append(condition)
-                            filter_params.extend(params_)
-                    else:
-                        filter_clauses.append("value->%s = %s::jsonb")
-                        filter_params.extend([key, orjson.dumps(value).decode("utf-8")])
+                    condition, params_ = self._get_filter_value_condition([key], value)
+                    filter_clauses.append(condition)
+                    filter_params.extend(params_)
 
             ns_condition = "TRUE"
             ns_param: Sequence[str] | None = None
@@ -647,20 +640,64 @@ class BasePostgresStore(Generic[C]):
 
         return queries
 
-    def _get_filter_condition(self, key: str, op: str, value: Any) -> tuple[str, list]:
-        """Helper to generate filter conditions."""
+    def _get_filter_value_condition(
+        self, path: list[str], value: Any
+    ) -> tuple[str, list]:
+        """Translate the recursive matching semantics of InMemoryStore."""
+        if isinstance(value, dict):
+            if any(key.startswith("$") for key in value):
+                conditions = [
+                    self._get_filter_condition(path, operator, operand)
+                    for operator, operand in value.items()
+                ]
+            else:
+                conditions = [
+                    ("jsonb_typeof(value #> %s::text[]) = 'object'", [path]),
+                    *(
+                        self._get_filter_value_condition([*path, key], operand)
+                        for key, operand in value.items()
+                    ),
+                ]
+        elif isinstance(value, (list, tuple)):
+            conditions = [
+                (
+                    "CASE WHEN jsonb_typeof(value #> %s::text[]) = 'array' "
+                    "THEN jsonb_array_length(value #> %s::text[]) = %s "
+                    "ELSE false END",
+                    [path, path, len(value)],
+                ),
+                *(
+                    self._get_filter_value_condition([*path, str(index)], operand)
+                    for index, operand in enumerate(value)
+                ),
+            ]
+        else:
+            return self._get_filter_condition(path, "$eq", value)
+        return (
+            "(" + " AND ".join(condition for condition, _ in conditions) + ")",
+            [parameter for _, parameters in conditions for parameter in parameters],
+        )
+
+    def _get_filter_condition(
+        self, path: list[str], op: str, value: Any
+    ) -> tuple[str, list]:
+        """Generate an operator predicate with a parameterized JSON path."""
         if op == "$eq":
-            return "value->%s = %s::jsonb", [key, json.dumps(value)]
-        elif op == "$gt":
-            return "value->>%s > %s", [key, str(value)]
-        elif op == "$gte":
-            return "value->>%s >= %s", [key, str(value)]
-        elif op == "$lt":
-            return "value->>%s < %s", [key, str(value)]
-        elif op == "$lte":
-            return "value->>%s <= %s", [key, str(value)]
+            return (
+                "COALESCE(value #> %s::text[], 'null'::jsonb) = %s::jsonb",
+                [path, json.dumps(value)],
+            )
         elif op == "$ne":
-            return "value->%s != %s::jsonb", [key, json.dumps(value)]
+            return (
+                "COALESCE(value #> %s::text[], 'null'::jsonb) != %s::jsonb",
+                [path, json.dumps(value)],
+            )
+        elif op in ("$gt", "$gte", "$lt", "$lte"):
+            operator = {"$gt": ">", "$gte": ">=", "$lt": "<", "$lte": "<="}[op]
+            return (
+                f"(value #>> %s::text[])::double precision {operator} %s",
+                [path, float(value)],
+            )
         else:
             raise ValueError(f"Unsupported operator: {op}")
 

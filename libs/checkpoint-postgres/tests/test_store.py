@@ -18,6 +18,7 @@ from langgraph.store.base import (
     PutOp,
     SearchOp,
 )
+from langgraph.store.memory import InMemoryStore
 from psycopg import Connection
 
 from langgraph.store.postgres import PostgresStore
@@ -1213,3 +1214,81 @@ def test_batch_allows_empty_search_prefix_and_listing_wildcards(
 
     assert [item.namespace for item in found] == [("foo", "bar")]
     assert listed == [("foo", "bar")]
+
+
+def _assert_recursive_filter_semantics(store: PostgresStore, query: str | None) -> None:
+    # Regression matrix requested in #9266: compare real SQL results with the
+    # reference store, including array order/length and missing intermediate objects.
+    memory = InMemoryStore()
+    documents = {
+        "missing": {},
+        "null": {"meta": None},
+        "scalar": {"meta": 5},
+        "array": {"meta": []},
+        "empty": {"meta": {}},
+        "exact": {"meta": {"deep": {"x": 5}, "tags": ["a"]}},
+        "siblings": {"meta": {"deep": {"x": 5.0, "y": 6}, "tags": ["a", "b"]}},
+        "deep_null": {"meta": {"deep": None}},
+        "deep_scalar": {"meta": {"deep": 5}},
+        "deep_empty": {"meta": {"deep": {}}},
+        "other": {"meta": {"deep": {"x": 6}, "tags": ["b", "a"]}},
+        "objects": {"meta": {"tags": [{"x": 5, "y": 6}]}},
+        "quoted": {"meta": {"a.b'\\c": 5}},
+    }
+    for key, document in documents.items():
+        value = {"text": "apple", **document}
+        store.put(("recursive",), key, value)
+        memory.put(("recursive",), key, value)
+    filters = [
+        {"meta": {"deep": {"x": 5}}},
+        {"meta": {}},
+        {"meta": {"deep": {}}},
+        {"meta": {"deep": None}},
+        {"meta": {"deep": {"x": None}}},
+        {"meta": {"tags": ["a"]}},
+        {"meta": {"tags": ["a", "b"]}},
+        {"meta": {"tags": ["b", "a"]}},
+        {"meta": {"tags": []}},
+        {"meta": {"tags": [{"x": 5}]}},
+        {"meta": {"deep": {"x": {"$ne": 5}}}},
+        {"meta": {"deep": {"x": 5}}, "text": "apple"},
+        {"meta": {"deep": {"x": {"deeper": None}}}},
+        {"meta": {"a.b'\\c": 5}},
+    ]
+    for filter_ in filters:
+        expected = {
+            item.key
+            for item in memory.search(("recursive",), filter=filter_, limit=100)
+        }
+        actual = {
+            item.key
+            for item in store.search(
+                ("recursive",), query=query, filter=filter_, limit=100
+            )
+        }
+        assert actual == expected, filter_
+
+    # Operators recurse too, with numeric ordering rather than text ordering.
+    for number in [2, 5, 10]:
+        value = {"text": "apple", "meta": {"deep": {"x": number}}}
+        store.put(("operators",), str(number), value)
+        memory.put(("operators",), str(number), value)
+    for operator in ["$eq", "$ne", "$gt", "$gte", "$lt", "$lte"]:
+        filter_ = {"meta": {"deep": {"x": {operator: 5}}}}
+        expected = {item.key for item in memory.search(("operators",), filter=filter_)}
+        actual = {
+            item.key
+            for item in store.search(("operators",), query=query, filter=filter_)
+        }
+        assert actual == expected, filter_
+
+
+def test_recursive_filters(store: PostgresStore) -> None:
+    _assert_recursive_filter_semantics(store, None)
+
+
+@pytest.mark.parametrize("query", [None, "apple"])
+def test_vector_recursive_filters(
+    vector_store: PostgresStore, query: str | None
+) -> None:
+    _assert_recursive_filter_semantics(vector_store, query)
