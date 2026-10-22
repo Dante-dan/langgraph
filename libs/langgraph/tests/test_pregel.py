@@ -3382,6 +3382,41 @@ def test_subgraph_checkpoint_true_interrupt(
     }
 
 
+@pytest.mark.parametrize(
+    "stream_kwargs,stream_eager,expected",
+    [
+        ({"stream_mode": "values"}, False, [{"x": 0}, {"x": 1}]),
+        ({"stream_mode": "messages"}, False, []),
+        ({"stream_mode": "custom"}, False, ["custom"]),
+        ({"subgraphs": True}, False, [((), {"a": {"x": 1}})]),
+        ({}, True, [{"a": {"x": 1}}]),
+    ],
+)
+def test_stream_max_concurrency_one(
+    stream_kwargs: dict[str, Any], stream_eager: bool, expected: list[Any]
+) -> None:
+    class State(TypedDict):
+        x: int
+
+    def node(state: State, writer: StreamWriter) -> State:
+        writer("custom")
+        return {"x": state["x"] + 1}
+
+    builder = StateGraph(State)
+    builder.add_node("a", node)
+    builder.add_edge(START, "a")
+    builder.add_edge("a", END)
+    graph = builder.compile()
+    graph.stream_eager = stream_eager
+    # Bound a regression to the waiter taking the only graph worker.
+    graph.step_timeout = 1
+
+    assert (
+        list(graph.stream({"x": 0}, {"max_concurrency": 1}, **stream_kwargs))
+        == expected
+    )
+
+
 def test_stream_subgraphs_during_execution(
     sync_checkpointer: BaseCheckpointSaver,
 ) -> None:

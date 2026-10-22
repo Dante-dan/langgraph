@@ -3031,6 +3031,11 @@ class Pregel(
                     or "messages" in stream_modes
                     or "custom" in stream_modes
                 ):
+                    # Waiting for stream output must not consume a worker from
+                    # the executor that runs graph tasks (max_concurrency may be 1).
+                    waiter_executor = loop.stack.enter_context(
+                        concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                    )
                     # we are careful to have a single waiter live at any one time
                     # because on exit we increment semaphore count by exactly 1
                     waiter: concurrent.futures.Future | None = None
@@ -3042,7 +3047,7 @@ class Pregel(
                     def get_waiter() -> concurrent.futures.Future[None]:
                         nonlocal waiter
                         if waiter is None or waiter.done():
-                            waiter = loop.submit(stream.wait)
+                            waiter = waiter_executor.submit(stream.wait)
                             return waiter
                         else:
                             return waiter
