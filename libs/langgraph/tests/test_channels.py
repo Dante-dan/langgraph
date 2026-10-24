@@ -1,6 +1,6 @@
 import operator
 from collections.abc import Sequence
-from typing import Annotated
+from typing import Annotated, Any
 
 import orjson
 import pytest
@@ -71,6 +71,23 @@ def test_topic() -> None:
     channel_copy.update(["f"])
     assert channel_copy.get() == ["f"]
     assert channel.get() == ["e"]
+
+
+@pytest.mark.parametrize("accumulate", [False, True])
+@pytest.mark.parametrize("checkpoint", [None, MISSING])
+def test_topic_copy_from_empty_checkpoint(checkpoint: Any, accumulate: bool) -> None:
+    channel = Topic(str, accumulate=accumulate).from_checkpoint(checkpoint)
+    channel_copy = channel.copy()
+
+    assert channel.checkpoint() == []
+    assert channel_copy.checkpoint() == []
+    assert channel_copy.accumulate is accumulate
+    with pytest.raises(EmptyChannelError):
+        channel_copy.get()
+
+    assert channel_copy.update(["value"])
+    assert channel_copy.get() == ["value"]
+    assert channel.checkpoint() == []
 
 
 def test_topic_accumulate() -> None:
