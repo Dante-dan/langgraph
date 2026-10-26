@@ -331,8 +331,13 @@ def apply_writes(
                     if channels[chan].is_available():
                         updated_channels.add(chan)
 
-    # If this is (tentatively) the last superstep, notify all channels of finish
-    if bump_step and updated_channels.isdisjoint(trigger_to_nodes):
+    # Pending Sends also schedule work, without updating a node trigger channel.
+    # If this is (tentatively) the last superstep, notify all channels of finish.
+    if (
+        bump_step
+        and updated_channels.isdisjoint(trigger_to_nodes)
+        and TASKS not in updated_channels
+    ):
         for chan in channels:
             if channels[chan].finish() and next_version is not None:
                 checkpoint["channel_versions"][chan] = next_version
